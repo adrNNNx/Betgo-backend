@@ -1,0 +1,57 @@
+# ============================================================
+# BETGO - Docker Compose para PostgreSQL
+# ============================================================
+# Uso:
+#   Iniciar:    docker-compose up -d
+#   Detener:    docker-compose down
+#   Ver logs:   docker-compose logs -f postgres
+#   Entrar BD:  docker exec -it betgo_postgres psql -U betgo -d betgo_db
+# ============================================================
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: betgo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      # Persistencia de datos
+      - betgo_postgres_data:/var/lib/postgresql/data
+      # Script de inicialización (se ejecuta solo la primera vez)
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U betgo -d betgo_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin (opcional) - Interfaz web para administrar PostgreSQL
+  # pgadmin:
+  #   image: dpage/pgadmin4:latest
+  #   container_name: betgo_pgadmin
+  #   restart: unless-stopped
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@betgo.com
+  #     PGADMIN_DEFAULT_PASSWORD: admin123
+  #     PGADMIN_CONFIG_SERVER_MODE: 'False'
+  #   ports:
+  #     - "5050:80"
+  #   volumes:
+  #     - betgo_pgadmin_data:/var/lib/pgadmin
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+volumes:
+  betgo_postgres_data:
+    name: betgo_postgres_data
+  betgo_pgadmin_data:
+    name: betgo_pgadmin_data
