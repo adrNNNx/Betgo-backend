@@ -11,5 +11,6 @@ import { getDatabaseConfig } from 'src/config/database.config';
       useFactory: getDatabaseConfig,
     }),
   ],
+  exports: [SequelizeModule],
 })
 export class DatabaseModule {}
