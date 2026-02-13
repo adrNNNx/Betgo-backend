@@ -29,8 +29,8 @@ export enum UserRole {
 interface UserCreationAttributes {
   phone: string;
   passwordHash: string;
-  email?: string;
-  name?: string;
+  email?: string | null;
+  name?: string | null;
   role?: UserRole;
   isActive?: boolean;
 }
@@ -60,7 +60,7 @@ export class User extends Model<User, UserCreationAttributes> {
     allowNull: true,
     unique: true,
   })
-  declare email: string;
+  declare email: string | null;
 
   @Column({
     type: DataType.STRING(255),
@@ -73,7 +73,7 @@ export class User extends Model<User, UserCreationAttributes> {
     type: DataType.STRING(100),
     allowNull: true,
   })
-  declare name: string;
+  declare name: string | null;
 
   @Column({
     type: DataType.DECIMAL(12, 2),
@@ -106,7 +106,7 @@ export class User extends Model<User, UserCreationAttributes> {
     allowNull: true,
     field: 'last_login_at',
   })
-  declare lastLoginAt: Date;
+  declare lastLoginAt: Date | null;
 
   @CreatedAt
   @Column({ field: 'created_at' })

@@ -146,9 +146,6 @@ export class GlobalPool extends Model<
   @BelongsTo(() => User, 'lastWinnerId')
   declare lastWinner: User;
 
-  @HasMany(() => PoolMovement)
-  declare movements: PoolMovement[];
-
   // ==================== MÉTODOS ESTÁTICOS ====================
 
   static async getInstance(): Promise<GlobalPool> {
@@ -159,6 +156,24 @@ export class GlobalPool extends Model<
     }
 
     return pool;
+  }
+
+  async getMovements(limit?: number): Promise<PoolMovement[]> {
+    return PoolMovement.findAll({
+      order: [['createdAt', 'DESC']],
+      limit: limit || 100,
+      include: [
+        { model: User, as: 'user' },
+        { model: User, as: 'createdBy' },
+      ],
+    });
+  }
+
+  static async getRecentMovements(limit: number = 10): Promise<PoolMovement[]> {
+    return PoolMovement.findAll({
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
   }
 
   // ==================== MÉTODOS ====================

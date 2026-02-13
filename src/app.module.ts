@@ -17,6 +17,7 @@ import { RechargeCodesModule } from './modules/recharge-codes/recharge-codes.mod
 import { PrizeClaimsModule } from './modules/prize-claims/prize-claims.module';
 import { PoolMovementsModule } from './modules/pool-movements/pool-movements.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
     PrizeClaimsModule,
     PoolMovementsModule,
     AuditLogsModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
