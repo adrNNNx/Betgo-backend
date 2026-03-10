@@ -7,8 +7,7 @@ import {
   HasMany,
   CreatedAt,
   UpdatedAt,
-  BeforeCreate,
-  BeforeUpdate,
+  BeforeValidate,
 } from 'sequelize-typescript';
 import { TableEntity } from '../../tables/entities/table.entity';
 import { Staff } from '../../staff/entities/staff.entity';
@@ -23,6 +22,7 @@ import { PoolMovement } from '../../pool-movements/entities/pool-movement.entity
 interface BarCreationAttributes {
   name: string;
   slug?: string;
+  accessCode?: string;
   address?: string;
   phone?: string;
   email?: string;
@@ -59,6 +59,14 @@ export class Bar extends Model<Bar, BarCreationAttributes> {
     unique: true,
   })
   declare slug: string;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: false,
+    unique: true,
+    field: 'access_code',
+  })
+  declare accessCode: string;
 
   @Column({
     type: DataType.STRING(255),
@@ -187,8 +195,19 @@ export class Bar extends Model<Bar, BarCreationAttributes> {
 
   // ==================== HOOKS ====================
 
-  @BeforeCreate
-  @BeforeUpdate
+  @BeforeValidate
+  static generateAccessCode(instance: Bar) {
+    if (!instance.accessCode) {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let code = '';
+      for (let i = 0; i < 8; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      instance.accessCode = code;
+    }
+  }
+
+  @BeforeValidate
   static generateSlug(instance: Bar) {
     if (instance.name && (!instance.slug || instance.changed('name'))) {
       instance.slug = instance.name

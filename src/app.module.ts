@@ -18,6 +18,7 @@ import { PrizeClaimsModule } from './modules/prize-claims/prize-claims.module';
 import { PoolMovementsModule } from './modules/pool-movements/pool-movements.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { GameAccessModule } from './modules/game-access/game-access.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AuthModule } from './modules/auth/auth.module';
     PoolMovementsModule,
     AuditLogsModule,
     AuthModule,
+    GameAccessModule,
   ],
   controllers: [AppController],
   providers: [AppService],

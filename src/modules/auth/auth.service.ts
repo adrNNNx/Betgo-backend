@@ -104,7 +104,11 @@ export class AuthService {
   async register(registerDto: RegisterDto): Promise<LoginResponse> {
     const { phone, email, password, name } = registerDto;
 
-    const existingPhone = await this.userModel.findOne({ where: { phone } });
+    const formattedPhone = this.formatPhoneForDB(phone);
+
+    const existingPhone = await this.userModel.findOne({
+      where: { phone: formattedPhone },
+    });
     if (existingPhone) {
       throw new ConflictException(AUTH_CONSTANTS.ERRORS.PHONE_ALREADY_EXISTS);
     }
@@ -121,10 +125,8 @@ export class AuthService {
       AUTH_CONSTANTS.SALT_ROUNDS,
     );
 
-    const finalPhone = this.formatPhoneForDB(phone);
-
     const user = await this.userModel.create({
-      phone: finalPhone,
+      phone: formattedPhone,
       email: email || null,
       passwordHash,
       name: name || null,
@@ -412,6 +414,7 @@ export class AuthService {
       phone: user.phone,
       email: user.email,
       name: user.name,
+      balance: user.balance,
       role: user.role,
       isActive: user.isActive,
     };

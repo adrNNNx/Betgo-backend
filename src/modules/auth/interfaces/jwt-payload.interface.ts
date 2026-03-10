@@ -1,13 +1,13 @@
 // src/modules/auth/interfaces/jwt-payload.interface.ts
 
 export interface JwtPayload {
-  sub: string;        // User ID
-  phone: string;      // Phone number
-  role: string;       // User role
+  sub: string; // User ID
+  phone: string; // Phone number
+  role: string; // User role
   type: 'access' | 'refresh';
   sessionId?: string; // sessionId
-  iat?: number;       // Issued at
-  exp?: number;       // Expiration
+  iat?: number; // Issued at
+  exp?: number; // Expiration
 }
 
 export interface TokenPair {
@@ -21,6 +21,7 @@ export interface AuthenticatedUser {
   phone: string;
   email: string | null;
   name: string | null;
+  balance: number;
   role: string;
   isActive: boolean;
 }

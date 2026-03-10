@@ -11,14 +11,12 @@ import {
 } from 'sequelize-typescript';
 import { User } from '../../users/entities/user.entity';
 import { Bar } from '../../bars/entities/bar.entity';
+import { InternalServerErrorException, Logger } from '@nestjs/common';
 
 interface UserDailyPlayCreationAttributes {
   barId: string;
-  playDate: Date;
-
-  deviceFingerprint?: string;
-  ipAddress?: string;
-  userId?: string;
+  userId: string;
+  playDate: string;
   playsUsed?: number;
   playsLimit?: number;
 }
@@ -29,22 +27,10 @@ interface UserDailyPlayCreationAttributes {
   underscored: true,
   indexes: [
     {
-      // Para usuarios registrados
+      // Índice único: un usuario solo puede tener un registro por bar por día
       unique: true,
       fields: ['bar_id', 'play_date', 'user_id'],
-      name: 'unique_user_daily_play',
-      where: {
-        user_id: { [Symbol.for('ne')]: null },
-      },
-    },
-    {
-      // Para usuarios anónimos
-      unique: true,
-      fields: ['bar_id', 'play_date', 'device_fingerprint'],
-      name: 'unique_device_daily_play',
-      where: {
-        device_fingerprint: { [Symbol.for('ne')]: null },
-      },
+      name: 'unique_user_bar_daily_play',
     },
   ],
 })
@@ -67,6 +53,14 @@ export class UserDailyPlay extends Model<
   })
   declare barId: string;
 
+  @ForeignKey(() => User)
+  @Column({
+    type: DataType.UUID,
+    allowNull: false,
+    field: 'user_id',
+  })
+  declare userId: string;
+
   @Column({
     type: DataType.DATEONLY,
     allowNull: false,
@@ -74,28 +68,6 @@ export class UserDailyPlay extends Model<
     field: 'play_date',
   })
   declare playDate: Date;
-
-  @Column({
-    type: DataType.STRING(255),
-    allowNull: true,
-    field: 'device_fingerprint',
-  })
-  declare deviceFingerprint: string;
-
-  @Column({
-    type: DataType.INET,
-    allowNull: true,
-    field: 'ip_address',
-  })
-  declare ipAddress: string;
-
-  @ForeignKey(() => User)
-  @Column({
-    type: DataType.UUID,
-    allowNull: true,
-    field: 'user_id',
-  })
-  declare userId: string;
 
   @Column({
     type: DataType.INTEGER,
@@ -143,37 +115,58 @@ export class UserDailyPlay extends Model<
     this.playsUsed += 1;
   }
 
-  static async findOrCreateDailyPlay(
+  /**
+   * Obtener o crear registro de jugadas diarias para un usuario en un bar
+   */
+  static async findOrCreateForUser(
     barId: string,
-    userId?: string,
-    deviceFingerprint?: string,
+    userId: string,
+    playsLimit: number = 3,
   ): Promise<UserDailyPlay> {
+    const logger = new Logger('UserDailyPlay');
+    try {
+      const today = new Date().toISOString().split('T')[0];
+
+      const [dailyPlay] = await UserDailyPlay.findOrCreate({
+        where: {
+          barId,
+          userId,
+          playDate: today,
+        },
+        defaults: {
+          barId,
+          userId,
+          playDate: today,
+          playsUsed: 0,
+          playsLimit,
+        },
+      });
+
+      return dailyPlay;
+    } catch (error) {
+      logger.error(
+        `Error en findOrCreateForUser: ${error.message}`,
+        error.stack,
+      );
+
+      throw new InternalServerErrorException(
+        'Ocurrió un error al obtener o crear el registro de jugadas diarias.',
+      );
+    }
+  }
+
+  /**
+   * Obtener resumen de jugadas del usuario en todos los bares hoy
+   */
+  static async getUserTodayPlays(userId: string): Promise<UserDailyPlay[]> {
     const today = new Date().toISOString().split('T')[0];
 
-    const where: any = {
-      barId,
-      playDate: today,
-    };
-
-    // Buscar por usuario registrado o dispositivo anónimo
-    if (userId) {
-      where.userId = userId;
-    } else if (deviceFingerprint) {
-      where.deviceFingerprint = deviceFingerprint;
-    }
-
-    const [dailyPlay] = await UserDailyPlay.findOrCreate({
-      where,
-      defaults: {
-        barId,
-        playDate: new Date(today),
+    return UserDailyPlay.findAll({
+      where: {
         userId,
-        deviceFingerprint,
-        playsUsed: 0,
-        playsLimit: 3,
+        playDate: today,
       },
+      include: [{ model: Bar, attributes: ['id', 'name', 'slug', 'logoUrl'] }],
     });
-
-    return dailyPlay;
   }
 }
