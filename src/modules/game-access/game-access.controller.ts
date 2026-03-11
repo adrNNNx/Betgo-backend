@@ -11,28 +11,17 @@ import {
 import { GameAccessService } from './game-access.service';
 import { Public, CurrentUser } from '../auth/decorators';
 import { User } from '../users/entities/user.entity';
-
-// ==================== DTOs ====================
-
-class PlayRequestDto {
-  barSlug: string;
-  tableId?: string;
-}
-
-// ==================== CONTROLLER ====================
+import { CreatePlayDto } from '../plays/dto/create-play.dto';
 
 @Controller('game')
 export class GameAccessController {
   constructor(private readonly gameAccessService: GameAccessService) {}
 
-  // ==================== ENDPOINTS PÚBLICOS (Sin Auth) ====================
+  // ==================== ENDPOINTS PÚBLICOS ====================
 
   /**
-   * Obtener info pública del bar (antes del login)
+   * Info pública del bar (antes del login).
    * GET /game/bar/:slugOrCode/public
-   *
-   * El usuario escanea el QR y ve el logo/nombre del bar
-   * antes de hacer login/registro
    */
   @Public()
   @Get('bar/:slugOrCode/public')
@@ -41,7 +30,7 @@ export class GameAccessController {
   }
 
   /**
-   * Estado del pozo global (público)
+   * Estado del pozo global (público).
    * GET /game/pool/status
    */
   @Public()
@@ -53,10 +42,10 @@ export class GameAccessController {
   // ==================== ENDPOINTS AUTENTICADOS ====================
 
   /**
-   * Acceder al bar (después del login)
+   * Acceder al bar (después del login).
    * GET /game/bar/:slugOrCode
    *
-   * Retorna la info completa del bar + jugadas restantes del usuario
+   * Retorna info del bar + jugadas restantes + pozo global.
    */
   @Get('bar/:slugOrCode')
   async accessBar(
@@ -67,7 +56,7 @@ export class GameAccessController {
   }
 
   /**
-   * Obtener símbolos del bar para mostrar en el juego
+   * Símbolos del bar para mostrar en el juego.
    * GET /game/bar/:slugOrCode/symbols
    */
   @Get('bar/:slugOrCode/symbols')
@@ -76,7 +65,7 @@ export class GameAccessController {
   }
 
   /**
-   * Ver resumen de jugadas del día del usuario
+   * Resumen de jugadas del día del usuario.
    * GET /game/my-plays-today
    */
   @Get('my-plays-today')
@@ -87,53 +76,53 @@ export class GameAccessController {
   // ==================== EJECUTAR JUGADAS ====================
 
   /**
-   * Ejecutar jugada GRATIS
+   * Ejecutar jugada GRATIS.
    * POST /game/play/free
    */
   @Post('play/free')
   @HttpCode(HttpStatus.OK)
   async playFree(
-    @Body() playRequest: PlayRequestDto,
+    @Body() dto: CreatePlayDto,
     @CurrentUser() user: User,
   ) {
     return this.gameAccessService.playFree(
-      playRequest.barSlug,
+      dto.barSlug,
       user.id,
-      playRequest.tableId,
+      dto.tableId,
     );
   }
 
   /**
-   * Ejecutar jugada PAGA (premio local del bar)
+   * Ejecutar jugada PAGA (premio local del bar).
    * POST /game/play/paid
    */
   @Post('play/paid')
   @HttpCode(HttpStatus.OK)
   async playPaid(
-    @Body() playRequest: PlayRequestDto,
+    @Body() dto: CreatePlayDto,
     @CurrentUser() user: User,
   ) {
     return this.gameAccessService.playPaid(
-      playRequest.barSlug,
+      dto.barSlug,
       user.id,
-      playRequest.tableId,
+      dto.tableId,
     );
   }
 
   /**
-   * Ejecutar jugada por el POZO GLOBAL
+   * Ejecutar jugada por el POZO GLOBAL.
    * POST /game/play/pool
    */
   @Post('play/pool')
   @HttpCode(HttpStatus.OK)
   async playPool(
-    @Body() playRequest: PlayRequestDto,
+    @Body() dto: CreatePlayDto,
     @CurrentUser() user: User,
   ) {
     return this.gameAccessService.playPool(
-      playRequest.barSlug,
+      dto.barSlug,
       user.id,
-      playRequest.tableId,
+      dto.tableId,
     );
   }
 }

@@ -1,26 +1,258 @@
-import { Injectable } from '@nestjs/common';
-import { CreatePlayDto } from './dto/create-play.dto';
-import { UpdatePlayDto } from './dto/update-play.dto';
+// src/modules/plays/plays.service.ts
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Play, PlayType, PlayResult } from './entities/play.entity';
+import { Symbol } from '../symbols/entities/symbol.entity';
+import { Prize } from '../prizes/entities/prize.entity';
+import {
+  PrizeClaim,
+  ClaimStatus,
+} from '../prize-claims/entities/prize-claim.entity';
+
+// ==================== INTERFACES ====================
+
+export interface GeneratedResult {
+  symbolIds: string[];
+  symbolDetails: Array<{ id: string; name: string; imageUrl: string }>;
+  isWinner: boolean;
+  matchCount: number;
+  winningSymbol: Symbol | null;
+}
+
+export interface CreatePlayParams {
+  userId: string;
+  barId: string;
+  tableId?: string;
+  type: PlayType;
+  result: PlayResult;
+  isWinner: boolean;
+  prizeId?: string;
+  amountPaid?: number;
+  poolContribution?: number;
+}
 
 @Injectable()
 export class PlaysService {
-  create(createPlayDto: CreatePlayDto) {
-    return 'This action adds a new play';
+  private readonly logger = new Logger(PlaysService.name);
+
+  constructor(
+    @InjectModel(Play)
+    private readonly playModel: typeof Play,
+    @InjectModel(Symbol)
+    private readonly symbolModel: typeof Symbol,
+    @InjectModel(Prize)
+    private readonly prizeModel: typeof Prize,
+    @InjectModel(PrizeClaim)
+    private readonly prizeClaimModel: typeof PrizeClaim,
+  ) {}
+
+  // ==================== CREACIÓN DE JUGADAS ====================
+
+  /**
+   * Crear un registro de jugada en la base de datos.
+   */
+  async createPlay(params: CreatePlayParams): Promise<Play> {
+    return this.playModel.create({
+      userId: params.userId,
+      barId: params.barId,
+      tableId: params.tableId,
+      type: params.type,
+      result: params.result,
+      isWinner: params.isWinner,
+      prizeId: params.prizeId,
+      amountPaid: params.amountPaid,
+      poolContribution: params.poolContribution,
+    });
   }
 
-  findAll() {
-    return `This action returns all plays`;
+  // ==================== GENERACIÓN DE RESULTADOS ====================
+
+  /**
+   * Obtener símbolos activos de un bar.
+   */
+  async getBarSymbols(barId: string): Promise<Symbol[]> {
+    const symbols = await this.symbolModel.findAll({
+      where: { barId, isActive: true },
+      order: [['weight', 'DESC']],
+      include: [{ model: Prize, required: false }],
+    });
+
+    if (symbols.length === 0) {
+      throw new BadRequestException(
+        'No hay símbolos configurados para este bar',
+      );
+    }
+
+    return symbols;
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} play`;
+  /**
+   * Obtener símbolos globales (para el pozo).
+   */
+  async getGlobalSymbols(): Promise<Symbol[]> {
+    const symbols = await this.symbolModel.findAll({
+      where: { barId: null, isActive: true },
+      order: [['weight', 'DESC']],
+      include: [{ model: Prize, required: false }],
+    });
+
+    if (symbols.length === 0) {
+      throw new BadRequestException('No hay símbolos globales configurados');
+    }
+
+    return symbols;
   }
 
-  update(id: number, updatePlayDto: UpdatePlayDto) {
-    return `This action updates a #${id} play`;
+  /**
+   * Generar un resultado aleatorio basado en los pesos de los símbolos.
+   * Retorna 5 símbolos. Gana si los 5 son iguales.
+   */
+  generatePlayResult(symbols: Symbol[]): GeneratedResult {
+    const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
+    const resultSymbols: Symbol[] = [];
+
+    for (let i = 0; i < 5; i++) {
+      let random = Math.random() * totalWeight;
+      let selected = false;
+
+      for (const symbol of symbols) {
+        random -= symbol.weight;
+        if (random <= 0) {
+          resultSymbols.push(symbol);
+          selected = true;
+          break;
+        }
+      }
+
+      // Fallback por seguridad
+      if (!selected) {
+        resultSymbols.push(symbols[symbols.length - 1]);
+      }
+    }
+
+    // Contar coincidencias
+    const symbolCounts = new Map<string, { count: number; symbol: Symbol }>();
+    for (const symbol of resultSymbols) {
+      const existing = symbolCounts.get(symbol.id);
+      if (existing) {
+        existing.count++;
+      } else {
+        symbolCounts.set(symbol.id, { count: 1, symbol });
+      }
+    }
+
+    // Encontrar el máximo de coincidencias
+    let maxCount = 0;
+    let winningSymbol: Symbol | null = null;
+    for (const [, value] of symbolCounts) {
+      if (value.count > maxCount) {
+        maxCount = value.count;
+        winningSymbol = value.symbol;
+      }
+    }
+
+    const isWinner = maxCount === 5;
+
+    return {
+      symbolIds: resultSymbols.map((s) => s.id),
+      symbolDetails: resultSymbols.map((s) => ({
+        id: s.id,
+        name: s.name,
+        imageUrl: s.imageUrl,
+      })),
+      isWinner,
+      matchCount: maxCount,
+      winningSymbol: isWinner ? winningSymbol : null,
+    };
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} play`;
+  // ==================== PREMIOS ====================
+
+  /**
+   * Obtener premio asociado a un símbolo ganador.
+   */
+  async getPrizeForSymbol(symbol: Symbol | null): Promise<Prize | null> {
+    if (!symbol || !symbol.prizeId) {
+      return null;
+    }
+    return this.prizeModel.findByPk(symbol.prizeId);
+  }
+
+  /**
+   * Crear un claim de premio para un ganador.
+   */
+  async createPrizeClaim(
+    playId: string,
+    userId: string,
+    barId: string,
+    prizeId: string,
+  ): Promise<PrizeClaim> {
+    // Generar código de reclamo único
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let claimCode = 'P-';
+    for (let i = 0; i < 8; i++) {
+      claimCode += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    // Expiración: 7 días
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    return this.prizeClaimModel.create({
+      playId,
+      userId,
+      barId,
+      prizeId,
+      claimCode,
+      status: ClaimStatus.PENDING,
+      expiresAt,
+    });
+  }
+
+  // ==================== CONSULTAS ====================
+
+  /**
+   * Obtener símbolos de un bar formateados para el frontend.
+   */
+  async getBarSymbolsForDisplay(barId: string): Promise<
+    Array<{
+      id: string;
+      name: string;
+      imageUrl: string;
+      hasPrize: boolean;
+    }>
+  > {
+    const symbols = await this.getBarSymbols(barId);
+
+    return symbols.map((s) => ({
+      id: s.id,
+      name: s.name,
+      imageUrl: s.imageUrl,
+      hasPrize: !!s.prizeId,
+    }));
+  }
+
+  /**
+   * Obtener historial de jugadas de un usuario.
+   */
+  async getUserPlayHistory(
+    userId: string,
+    barId?: string,
+    limit: number = 50,
+  ): Promise<Play[]> {
+    const where: any = { userId };
+    if (barId) {
+      where.barId = barId;
+    }
+
+    return this.playModel.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
   }
 }

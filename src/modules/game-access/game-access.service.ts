@@ -1,34 +1,31 @@
 // src/modules/game-access/game-access.service.ts
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
-  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
-import { Op } from 'sequelize';
-import { Bar } from '../bars/entities/bar.entity';
-import { UserDailyPlay } from '../user-daily-plays/entities/user-daily-play.entity';
-import { User } from '../users/entities/user.entity';
-import { Symbol } from '../symbols/entities/symbol.entity';
-import { Prize } from '../prizes/entities/prize.entity';
-import { Play, PlayType } from '../plays/entities/play.entity';
-import {
-  PrizeClaim,
-  ClaimStatus,
-} from '../prize-claims/entities/prize-claim.entity';
-import { GlobalPool } from '../global-pool/entities/global-pool.entity';
-import {
-  PoolMovement,
-  PoolMovementType,
-} from '../pool-movements/entities/pool-movement.entity';
-import {
-  Transaction,
-  TransactionType,
-} from '../transactions/entities/transaction.entity';
 
-// ==================== INTERFACES ====================
+// Servicios inyectados (Single Responsibility)
+import { BarsService } from '../bars/bars.service';
+import { PlaysService } from '../plays/plays.service';
+import {
+  UserDailyPlaysService,
+  DailyPlayStatus,
+} from '../user-daily-plays/user-daily-plays.service';
+
+// Modelos que aún no tienen service propio
+import { User } from '../users/entities/user.entity';
+import { GlobalPool } from '../global-pool/entities/global-pool.entity';
+import { PoolMovement, PoolMovementType } from '../pool-movements/entities/pool-movement.entity';
+import { Transaction, TransactionType } from '../transactions/entities/transaction.entity';
+
+// Tipos
+import { PlayType } from '../plays/entities/play.entity';
+
+// ==================== INTERFACES DE RESPUESTA ====================
 
 export interface BarAccessResponse {
   bar: {
@@ -50,7 +47,7 @@ export interface BarAccessResponse {
   };
 }
 
-export interface PlayResult {
+export interface PlayResultResponse {
   playId: string;
   symbols: string[];
   symbolDetails: Array<{ id: string; name: string; imageUrl: string }>;
@@ -75,55 +72,41 @@ export class GameAccessService {
   private readonly logger = new Logger(GameAccessService.name);
 
   constructor(
-    @InjectModel(Bar)
-    private barModel: typeof Bar,
-    @InjectModel(UserDailyPlay)
-    private userDailyPlayModel: typeof UserDailyPlay,
+    // Servicios inyectados
+    private readonly barsService: BarsService,
+    private readonly playsService: PlaysService,
+    private readonly userDailyPlaysService: UserDailyPlaysService,
+
+    // Modelos directos (migrar a services en el futuro)
     @InjectModel(User)
-    private userModel: typeof User,
-    @InjectModel(Symbol)
-    private symbolModel: typeof Symbol,
-    @InjectModel(Prize)
-    private prizeModel: typeof Prize,
-    @InjectModel(Play)
-    private playModel: typeof Play,
-    @InjectModel(PrizeClaim)
-    private prizeClaimModel: typeof PrizeClaim,
+    private readonly userModel: typeof User,
     @InjectModel(GlobalPool)
-    private globalPoolModel: typeof GlobalPool,
+    private readonly globalPoolModel: typeof GlobalPool,
     @InjectModel(PoolMovement)
-    private poolMovementModel: typeof PoolMovement,
+    private readonly poolMovementModel: typeof PoolMovement,
     @InjectModel(Transaction)
-    private transactionModel: typeof Transaction,
+    private readonly transactionModel: typeof Transaction,
   ) {}
 
   // ==================== ACCESO AL BAR ====================
 
   /**
-   * Acceder a un bar (usuario debe estar autenticado)
-   * Este endpoint se llama después del login cuando el usuario escaneó el QR
+   * Acceder a un bar (usuario autenticado).
+   * Retorna la info del bar + estado de jugadas + pozo global.
    */
   async accessBar(
     barSlugOrCode: string,
     userId: string,
   ): Promise<BarAccessResponse> {
-    // Buscar bar
-    const bar = await this.findBarBySlugOrCode(barSlugOrCode);
+    const bar = await this.barsService.findBySlugOrCode(barSlugOrCode);
+    const user = await this.getUser(userId);
 
-    // Obtener usuario
-    const user = await this.userModel.findByPk(userId);
-    if (!user) {
-      throw new ForbiddenException('Usuario no encontrado');
-    }
-
-    // Obtener o crear registro de jugadas diarias
-    const dailyPlay = await UserDailyPlay.findOrCreateForUser(
+    const dailyStatus = await this.userDailyPlaysService.getDailyPlayStatus(
       bar.id,
       userId,
       bar.freePlaysPerDay,
     );
 
-    // Obtener estado del pozo global
     const pool = await this.getGlobalPool();
 
     return {
@@ -135,9 +118,9 @@ export class GameAccessService {
         freePlaysPerDay: bar.freePlaysPerDay,
       },
       session: {
-        playsRemaining: dailyPlay.getRemainingPlays(),
-        playsUsed: dailyPlay.playsUsed,
-        playsLimit: dailyPlay.playsLimit,
+        playsRemaining: dailyStatus.playsRemaining,
+        playsUsed: dailyStatus.playsUsed,
+        playsLimit: dailyStatus.playsLimit,
         userBalance: user.balance,
       },
       globalPool: {
@@ -148,71 +131,56 @@ export class GameAccessService {
   }
 
   /**
-   * Obtener información pública del bar (sin autenticación)
-   * Solo para mostrar el logo y nombre antes del login
+   * Obtener información pública del bar (sin autenticación).
    */
-  async getBarPublicInfo(barSlugOrCode: string): Promise<{
-    id: string;
-    name: string;
-    slug: string;
-    logoUrl: string | null;
-    frePlaysPerDay: number;
-  }> {
-    const bar = await this.findBarBySlugOrCode(barSlugOrCode);
+  async getBarPublicInfo(barSlugOrCode: string) {
+    const bar = await this.barsService.findBySlugOrCode(barSlugOrCode);
 
     return {
       id: bar.id,
       name: bar.name,
       slug: bar.slug,
       logoUrl: bar.logoUrl,
-      frePlaysPerDay: bar.freePlaysPerDay,
+      freePlaysPerDay: bar.freePlaysPerDay,
     };
   }
 
-  // ==================== EJECUTAR JUGADAS ====================
+  // ==================== JUGADA GRATIS ====================
 
   /**
-   * Ejecutar jugada GRATIS
+   * Ejecutar jugada gratuita.
+   * Verifica disponibilidad, genera resultado, consume la jugada.
    */
   async playFree(
     barSlug: string,
     userId: string,
     tableId?: string,
-  ): Promise<PlayResult> {
-    const bar = await this.findBarBySlugOrCode(barSlug);
+  ): Promise<PlayResultResponse> {
+    const bar = await this.barsService.findBySlugOrCode(barSlug);
     const user = await this.getUser(userId);
 
-    // Obtener registro de jugadas diarias
-    const dailyPlay = await UserDailyPlay.findOrCreateForUser(
+    // Verificar y consumir jugada diaria (lanza excepción si no hay)
+    const dailyPlay = await this.userDailyPlaysService.verifyAndConsumeFreePlay(
       bar.id,
       userId,
       bar.freePlaysPerDay,
+      bar.name,
     );
 
-    // Verificar que tiene jugadas disponibles
-    if (!dailyPlay.hasPlaysRemaining()) {
-      throw new BadRequestException(
-        `Has agotado tus ${bar.freePlaysPerDay} jugadas gratis del día en ${bar.name}. ` +
-          `¡Recarga saldo para jugar por el pozo global!`,
-      );
-    }
+    // Obtener símbolos y generar resultado
+    const symbols = await this.playsService.getBarSymbols(bar.id);
+    const result = this.playsService.generatePlayResult(symbols);
 
-    // Obtener símbolos del bar
-    const symbols = await this.getBarSymbols(bar.id);
-
-    // Generar resultado
-    const result = this.generatePlayResult(symbols);
-
-    // Verificar si ganó
+    // Verificar premio
     const prize = result.isWinner
-      ? await this.getPrizeForSymbol(result.winningSymbol)
+      ? await this.playsService.getPrizeForSymbol(result.winningSymbol)
       : null;
 
     // Crear registro de la jugada
-    const play = await this.playModel.create({
+    const play = await this.playsService.createPlay({
       userId: user.id,
       barId: bar.id,
-      tableId: tableId ?? undefined,
+      tableId,
       type: PlayType.FREE,
       result: {
         symbols: result.symbolIds,
@@ -220,17 +188,13 @@ export class GameAccessService {
         isWinner: result.isWinner,
       },
       isWinner: result.isWinner,
-      prizeId: prize?.id ?? undefined,
+      prizeId: prize?.id,
     });
-
-    // Incrementar contador de jugadas usadas
-    dailyPlay.incrementPlaysUsed();
-    await dailyPlay.save();
 
     // Si ganó, crear claim del premio
     let claimCode: string | undefined;
     if (prize) {
-      const claim = await this.createPrizeClaim(
+      const claim = await this.playsService.createPrizeClaim(
         play.id,
         user.id,
         bar.id,
@@ -266,21 +230,21 @@ export class GameAccessService {
     };
   }
 
+  // ==================== JUGADA PAGA ====================
+
   /**
-   * Ejecutar jugada PAGA (premio local del bar)
+   * Ejecutar jugada paga (premio local del bar).
    */
   async playPaid(
     barSlug: string,
     userId: string,
     tableId?: string,
-  ): Promise<PlayResult> {
-    const bar = await this.findBarBySlugOrCode(barSlug);
+  ): Promise<PlayResultResponse> {
+    const bar = await this.barsService.findBySlugOrCode(barSlug);
     const user = await this.getUser(userId);
 
-    // Costo de la jugada (configurable por bar en el futuro)
-    const playCost = 1000;
+    const playCost = 1000; // TODO: hacer configurable por bar
 
-    // Verificar saldo
     if (user.balance < playCost) {
       throw new BadRequestException(
         `Saldo insuficiente. Necesitas Gs. ${playCost.toLocaleString()} para jugar. ` +
@@ -288,27 +252,24 @@ export class GameAccessService {
       );
     }
 
-    // Obtener símbolos del bar
-    const symbols = await this.getBarSymbols(bar.id);
-
     // Generar resultado
-    const result = this.generatePlayResult(symbols);
+    const symbols = await this.playsService.getBarSymbols(bar.id);
+    const result = this.playsService.generatePlayResult(symbols);
 
-    // Verificar si ganó premio local
     const prize = result.isWinner
-      ? await this.getPrizeForSymbol(result.winningSymbol)
+      ? await this.playsService.getPrizeForSymbol(result.winningSymbol)
       : null;
 
-    // Descontar saldo del usuario
+    // Descontar saldo
     const balanceBefore = user.balance;
     await user.decrement('balance', { by: playCost });
     await user.reload();
 
-    // Crear registro de la jugada
-    const play = await this.playModel.create({
+    // Crear jugada
+    const play = await this.playsService.createPlay({
       userId: user.id,
       barId: bar.id,
-      tableId: tableId ?? undefined,
+      tableId,
       type: PlayType.PAID,
       result: {
         symbols: result.symbolIds,
@@ -316,7 +277,7 @@ export class GameAccessService {
         isWinner: result.isWinner,
       },
       isWinner: result.isWinner,
-      prizeId: prize?.id ?? undefined,
+      prizeId: prize?.id,
       amountPaid: playCost,
     });
 
@@ -330,13 +291,13 @@ export class GameAccessService {
       balanceAfter: user.balance,
     });
 
-    // Distribuir el pago según porcentajes del bar
+    // Distribuir pago según porcentajes
     await this.distributePayment(bar, playCost);
 
-    // Si ganó, crear claim del premio
+    // Crear claim si ganó
     let claimCode: string | undefined;
     if (prize) {
-      const claim = await this.createPrizeClaim(
+      const claim = await this.playsService.createPrizeClaim(
         play.id,
         user.id,
         bar.id,
@@ -345,8 +306,8 @@ export class GameAccessService {
       claimCode = claim.claimCode;
     }
 
-    // Obtener jugadas diarias restantes
-    const dailyPlay = await UserDailyPlay.findOrCreateForUser(
+    // Obtener estado actualizado de jugadas diarias
+    const dailyStatus = await this.userDailyPlaysService.getDailyPlayStatus(
       bar.id,
       userId,
       bar.freePlaysPerDay,
@@ -372,29 +333,29 @@ export class GameAccessService {
           }
         : null,
       session: {
-        playsRemaining: dailyPlay.getRemainingPlays(),
-        playsUsed: dailyPlay.playsUsed,
+        playsRemaining: dailyStatus.playsRemaining,
+        playsUsed: dailyStatus.playsUsed,
         balance: user.balance,
       },
     };
   }
 
+  // ==================== JUGADA POR POZO GLOBAL ====================
+
   /**
-   * Ejecutar jugada por el POZO GLOBAL
+   * Ejecutar jugada por el pozo global (jackpot).
    */
   async playPool(
     barSlug: string,
     userId: string,
     tableId?: string,
-  ): Promise<PlayResult> {
-    const bar = await this.findBarBySlugOrCode(barSlug);
+  ): Promise<PlayResultResponse> {
+    const bar = await this.barsService.findBySlugOrCode(barSlug);
     const user = await this.getUser(userId);
 
-    // Obtener pozo global
     const pool = await this.getGlobalPool();
     const playCost = Number(pool.costPerPlay);
 
-    // Verificar saldo
     if (user.balance < playCost) {
       throw new BadRequestException(
         `Saldo insuficiente. Necesitas Gs. ${playCost.toLocaleString()} para jugar por el pozo. ` +
@@ -402,29 +363,25 @@ export class GameAccessService {
       );
     }
 
-    // Obtener símbolos GLOBALES (del pozo)
-    const symbols = await this.getGlobalSymbols();
+    // Generar resultado con símbolos globales
+    const symbols = await this.playsService.getGlobalSymbols();
+    const result = this.playsService.generatePlayResult(symbols);
 
-    // Generar resultado
-    const result = this.generatePlayResult(symbols);
-
-    // Verificar si ganó el jackpot (todos los símbolos iguales Y es el símbolo jackpot)
     const isJackpotWinner =
       result.isWinner && !!result.winningSymbol?.isJackpot;
 
-    // Descontar saldo del usuario
+    // Descontar saldo
     const balanceBefore = user.balance;
     await user.decrement('balance', { by: playCost });
     await user.reload();
 
-    // Calcular contribución al pozo
     const poolContribution = playCost * (bar.poolPercentage / 100);
 
-    // Crear registro de la jugada
-    const play = await this.playModel.create({
+    // Crear jugada
+    const play = await this.playsService.createPlay({
       userId: user.id,
       barId: bar.id,
-      tableId: tableId ?? undefined,
+      tableId,
       type: PlayType.POOL,
       result: {
         symbols: result.symbolIds,
@@ -449,13 +406,12 @@ export class GameAccessService {
     let jackpotAmount: number | undefined;
 
     if (!isJackpotWinner) {
-      // No ganó: agregar contribución al pozo
+      // No ganó: contribuir al pozo
       const poolBefore = Number(pool.currentAmount);
       await pool.increment('currentAmount', { by: poolContribution });
       await pool.increment('totalCollected', { by: poolContribution });
       await pool.reload();
 
-      // Registrar movimiento del pozo
       await this.poolMovementModel.create({
         type: PoolMovementType.CONTRIBUTION,
         amount: poolContribution,
@@ -466,14 +422,12 @@ export class GameAccessService {
         playId: play.id,
       });
     } else {
-      // ¡GANÓ EL JACKPOT!
+      // ¡JACKPOT!
       jackpotAmount = Number(pool.currentAmount);
 
-      // Transferir pozo al ganador
       await user.increment('balance', { by: jackpotAmount });
       await user.reload();
 
-      // Registrar movimiento del pozo
       const poolBefore = Number(pool.currentAmount);
       await this.poolMovementModel.create({
         type: PoolMovementType.JACKPOT_WIN,
@@ -485,7 +439,6 @@ export class GameAccessService {
         playId: play.id,
       });
 
-      // Resetear pozo al mínimo
       await pool.update({
         currentAmount: pool.minAmount,
         lastWinnerId: user.id,
@@ -494,7 +447,6 @@ export class GameAccessService {
         totalPaid: Number(pool.totalPaid) + jackpotAmount,
       });
 
-      // Registrar transacción de premio
       await this.transactionModel.create({
         userId: user.id,
         barId: bar.id,
@@ -505,12 +457,12 @@ export class GameAccessService {
       });
 
       this.logger.log(
-        `🎉🎉🎉 JACKPOT GANADO 🎉🎉🎉 - User: ${user.phone}, Monto: Gs. ${jackpotAmount.toLocaleString()}`,
+        `🎉 JACKPOT GANADO - User: ${user.phone}, Monto: Gs. ${jackpotAmount.toLocaleString()}`,
       );
     }
 
-    // Obtener jugadas diarias restantes
-    const dailyPlay = await UserDailyPlay.findOrCreateForUser(
+    // Estado actualizado de jugadas
+    const dailyStatus = await this.userDailyPlaysService.getDailyPlayStatus(
       bar.id,
       userId,
       bar.freePlaysPerDay,
@@ -530,24 +482,17 @@ export class GameAccessService {
           }
         : null,
       session: {
-        playsRemaining: dailyPlay.getRemainingPlays(),
-        playsUsed: dailyPlay.playsUsed,
+        playsRemaining: dailyStatus.playsRemaining,
+        playsUsed: dailyStatus.playsUsed,
         balance: user.balance,
       },
       poolAmount: Number(pool.currentAmount),
     };
   }
 
-  // ==================== MÉTODOS DE CONSULTA ====================
+  // ==================== CONSULTAS ====================
 
-  /**
-   * Obtener estado actual del pozo global
-   */
-  async getGlobalPoolStatus(): Promise<{
-    currentAmount: number;
-    costPerPlay: number;
-    lastWinner: { name: string; amount: number; date: Date } | null;
-  }> {
+  async getGlobalPoolStatus() {
     const pool = await this.getGlobalPool();
 
     let lastWinner;
@@ -569,75 +514,16 @@ export class GameAccessService {
     };
   }
 
-  /**
-   * Obtener resumen de jugadas del día del usuario
-   */
-  async getUserDailySummary(userId: string): Promise<{
-    bars: Array<{
-      barId: string;
-      barName: string;
-      barSlug: string;
-      playsUsed: number;
-      playsRemaining: number;
-    }>;
-    totalPlaysToday: number;
-  }> {
-    const dailyPlays = await UserDailyPlay.getUserTodayPlays(userId);
-
-    const bars = dailyPlays.map((dp) => ({
-      barId: dp.barId,
-      barName: dp.bar?.name || '',
-      barSlug: dp.bar?.slug || '',
-      playsUsed: dp.playsUsed,
-      playsRemaining: dp.getRemainingPlays(),
-    }));
-
-    const totalPlaysToday = dailyPlays.reduce(
-      (sum, dp) => sum + dp.playsUsed,
-      0,
-    );
-
-    return { bars, totalPlaysToday };
+  async getUserDailySummary(userId: string) {
+    return this.userDailyPlaysService.getUserDailySummary(userId);
   }
 
-  /**
-   * Obtener símbolos del bar para mostrar en el juego
-   */
-  async getBarSymbolsForDisplay(barSlug: string): Promise<
-    Array<{
-      id: string;
-      name: string;
-      imageUrl: string;
-      hasPrize: boolean;
-    }>
-  > {
-    const bar = await this.findBarBySlugOrCode(barSlug);
-    const symbols = await this.getBarSymbols(bar.id);
-
-    return symbols.map((s) => ({
-      id: s.id,
-      name: s.name,
-      imageUrl: s.imageUrl,
-      hasPrize: !!s.prizeId,
-    }));
+  async getBarSymbolsForDisplay(barSlug: string) {
+    const bar = await this.barsService.findBySlugOrCode(barSlug);
+    return this.playsService.getBarSymbolsForDisplay(bar.id);
   }
 
-  // ==================== MÉTODOS PRIVADOS ====================
-
-  private async findBarBySlugOrCode(slugOrCode: string): Promise<Bar> {
-    const bar = await this.barModel.findOne({
-      where: {
-        [Op.or]: [{ slug: slugOrCode }, { accessCode: slugOrCode }],
-        isActive: true,
-      },
-    });
-
-    if (!bar) {
-      throw new NotFoundException('Bar no encontrado o inactivo');
-    }
-
-    return bar;
-  }
+  // ==================== PRIVADOS ====================
 
   private async getUser(userId: string): Promise<User> {
     const user = await this.userModel.findByPk(userId);
@@ -655,145 +541,12 @@ export class GameAccessService {
     return pool;
   }
 
-  private async getBarSymbols(barId: string): Promise<Symbol[]> {
-    const symbols = await this.symbolModel.findAll({
-      where: { barId, isActive: true },
-      order: [['weight', 'DESC']],
-      include: [{ model: Prize, required: false }],
-    });
-
-    if (symbols.length === 0) {
-      throw new BadRequestException(
-        'No hay símbolos configurados para este bar',
-      );
-    }
-
-    return symbols;
-  }
-
-  private async getGlobalSymbols(): Promise<Symbol[]> {
-    const symbols = await this.symbolModel.findAll({
-      where: { barId: null, isActive: true },
-      order: [['weight', 'DESC']],
-      include: [{ model: Prize, required: false }],
-    });
-
-    if (symbols.length === 0) {
-      throw new BadRequestException('No hay símbolos globales configurados');
-    }
-
-    return symbols;
-  }
-
-  private generatePlayResult(symbols: Symbol[]): {
-    symbolIds: string[];
-    symbolDetails: Array<{ id: string; name: string; imageUrl: string }>;
-    isWinner: boolean;
-    matchCount: number;
-    winningSymbol: Symbol | null;
-  } {
-    // Generar 5 símbolos aleatorios basados en peso
-    const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
-    const resultSymbols: Symbol[] = [];
-
-    for (let i = 0; i < 5; i++) {
-      let random = Math.random() * totalWeight;
-      for (const symbol of symbols) {
-        random -= symbol.weight;
-        if (random <= 0) {
-          resultSymbols.push(symbol);
-          break;
-        }
-      }
-      // Fallback
-      if (resultSymbols.length <= i) {
-        resultSymbols.push(symbols[symbols.length - 1]);
-      }
-    }
-
-    // Contar coincidencias
-    const symbolCounts = new Map<string, { count: number; symbol: Symbol }>();
-    for (const symbol of resultSymbols) {
-      const existing = symbolCounts.get(symbol.id);
-      if (existing) {
-        existing.count++;
-      } else {
-        symbolCounts.set(symbol.id, { count: 1, symbol });
-      }
-    }
-
-    // Encontrar el máximo de coincidencias
-    let maxCount = 0;
-    let winningSymbol: Symbol | null = null;
-    for (const [, value] of symbolCounts) {
-      if (value.count > maxCount) {
-        maxCount = value.count;
-        winningSymbol = value.symbol;
-      }
-    }
-
-    // Gana si tiene 5 iguales
-    const isWinner = maxCount === 5;
-
-    return {
-      symbolIds: resultSymbols.map((s) => s.id),
-      symbolDetails: resultSymbols.map((s) => ({
-        id: s.id,
-        name: s.name,
-        imageUrl: s.imageUrl,
-      })),
-      isWinner,
-      matchCount: maxCount,
-      winningSymbol: isWinner ? winningSymbol : null,
-    };
-  }
-
-  private async getPrizeForSymbol(
-    symbol: Symbol | null,
-  ): Promise<Prize | null> {
-    if (!symbol || !symbol.prizeId) {
-      return null;
-    }
-    return this.prizeModel.findByPk(symbol.prizeId);
-  }
-
-  private async createPrizeClaim(
-    playId: string,
-    userId: string,
-    barId: string,
-    prizeId: string,
-  ): Promise<PrizeClaim> {
-    // Generar código de reclamo
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let claimCode = 'P-';
-    for (let i = 0; i < 8; i++) {
-      claimCode += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-
-    // Fecha de expiración (7 días)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    return this.prizeClaimModel.create({
-      playId,
-      userId,
-      barId,
-      prizeId,
-      claimCode,
-      status: ClaimStatus.PENDING,
-      expiresAt,
-    });
-  }
-
-  private async distributePayment(bar: Bar, amount: number): Promise<void> {
-    // Calcular distribución
+  private async distributePayment(bar: any, amount: number): Promise<void> {
     const barAmount = amount * (bar.barPercentage / 100);
     const poolAmount = amount * (bar.poolPercentage / 100);
 
-    // Acreditar al bar
     await bar.increment('balance', { by: barAmount });
 
-    // Acreditar al pozo
     const pool = await this.globalPoolModel.findOne({ where: { id: 1 } });
     if (pool) {
       await pool.increment('currentAmount', { by: poolAmount });

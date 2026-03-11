@@ -1,34 +1,33 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+// src/modules/user-daily-plays/user-daily-plays.controller.ts
+import { Controller, Get, Param } from '@nestjs/common';
 import { UserDailyPlaysService } from './user-daily-plays.service';
-import { CreateUserDailyPlayDto } from './dto/create-user-daily-play.dto';
-import { UpdateUserDailyPlayDto } from './dto/update-user-daily-play.dto';
+import { CurrentUser } from '../auth/decorators';
+import { User } from '../users/entities/user.entity';
 
 @Controller('user-daily-plays')
 export class UserDailyPlaysController {
-  constructor(private readonly userDailyPlaysService: UserDailyPlaysService) {}
+  constructor(
+    private readonly userDailyPlaysService: UserDailyPlaysService,
+  ) {}
 
-  @Post()
-  create(@Body() createUserDailyPlayDto: CreateUserDailyPlayDto) {
-    return this.userDailyPlaysService.create(createUserDailyPlayDto);
+  /**
+   * Obtener resumen de jugadas del día del usuario en todos los bares.
+   * GET /user-daily-plays/my-summary
+   */
+  @Get('my-summary')
+  async getMySummary(@CurrentUser() user: User) {
+    return this.userDailyPlaysService.getUserDailySummary(user.id);
   }
 
-  @Get()
-  findAll() {
-    return this.userDailyPlaysService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.userDailyPlaysService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDailyPlayDto: UpdateUserDailyPlayDto) {
-    return this.userDailyPlaysService.update(+id, updateUserDailyPlayDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.userDailyPlaysService.remove(+id);
+  /**
+   * Obtener historial de jugadas diarias en un bar.
+   * GET /user-daily-plays/history/:barId
+   */
+  @Get('history/:barId')
+  async getBarHistory(
+    @CurrentUser() user: User,
+    @Param('barId') barId: string,
+  ) {
+    return this.userDailyPlaysService.getUserBarHistory(user.id, barId);
   }
 }
