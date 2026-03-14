@@ -8,6 +8,7 @@ import {
 import { InjectModel } from '@nestjs/sequelize';
 import { UserDailyPlay } from './entities/user-daily-play.entity';
 import { Bar } from '../bars/entities/bar.entity';
+import { getTodayInParaguay } from 'src/common/utils/timezone.util';
 
 export interface DailyPlayStatus {
   playsUsed: number;
@@ -49,23 +50,22 @@ export class UserDailyPlaysService {
     playsLimit: number,
   ): Promise<UserDailyPlay> {
     try {
-      const today = this.getTodayDateString();
+      const today = getTodayInParaguay();
 
-      const [dailyPlay, created] =
-        await this.userDailyPlayModel.findOrCreate({
-          where: {
-            barId,
-            userId,
-            playDate: today,
-          },
-          defaults: {
-            barId,
-            userId,
-            playDate: today,
-            playsUsed: 0,
-            playsLimit,
-          },
-        });
+      const [dailyPlay, created] = await this.userDailyPlayModel.findOrCreate({
+        where: {
+          barId,
+          userId,
+          playDate: today,
+        },
+        defaults: {
+          barId,
+          userId,
+          playDate: today,
+          playsUsed: 0,
+          playsLimit,
+        },
+      });
 
       if (created) {
         this.logger.debug(
@@ -104,7 +104,7 @@ export class UserDailyPlaysService {
       playsLimit: dailyPlay.playsLimit,
       playsRemaining: this.calculateRemaining(dailyPlay),
       hasPlaysRemaining: dailyPlay.playsUsed < dailyPlay.playsLimit,
-      playDate: this.getTodayDateString(),
+      playDate: getTodayInParaguay(),
     };
   }
 
@@ -153,7 +153,7 @@ export class UserDailyPlaysService {
    * Obtener resumen de jugadas del día del usuario en todos los bares.
    */
   async getUserDailySummary(userId: string): Promise<UserDailySummary> {
-    const today = this.getTodayDateString();
+    const today = getTodayInParaguay();
 
     const dailyPlays = await this.userDailyPlayModel.findAll({
       where: {
@@ -201,10 +201,6 @@ export class UserDailyPlaysService {
   }
 
   // ==================== PRIVADOS ====================
-
-  private getTodayDateString(): string {
-    return new Date().toISOString().split('T')[0];
-  }
 
   private calculateRemaining(dailyPlay: UserDailyPlay): number {
     return Math.max(0, dailyPlay.playsLimit - dailyPlay.playsUsed);
