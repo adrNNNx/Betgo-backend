@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
+import { Op } from 'sequelize';
 import { Play, PlayType, PlayResult } from './entities/play.entity';
 import { Symbol } from '../symbols/entities/symbol.entity';
 import { Prize } from '../prizes/entities/prize.entity';
@@ -72,18 +73,23 @@ export class PlaysService {
   // ==================== GENERACIÓN DE RESULTADOS ====================
 
   /**
-   * Obtener símbolos activos de un bar.
+   * Obtener símbolos activos para un bar.
+   * Fusiona símbolos globales (bar_id = NULL) + exclusivos del bar.
+   * Solo retorna los que están activos (is_active = true).
    */
   async getBarSymbols(barId: string): Promise<Symbol[]> {
     const symbols = await this.symbolModel.findAll({
-      where: { barId, isActive: true },
+      where: {
+        [Op.or]: [{ barId: null }, { barId }],
+        isActive: true,
+      },
       order: [['weight', 'DESC']],
       include: [{ model: Prize, required: false }],
     });
 
     if (symbols.length === 0) {
       throw new BadRequestException(
-        'No hay símbolos configurados para este bar',
+        'No hay símbolos configurados. Se necesitan al menos símbolos globales.',
       );
     }
 
@@ -91,7 +97,7 @@ export class PlaysService {
   }
 
   /**
-   * Obtener símbolos globales (para el pozo).
+   * Obtener solo símbolos globales (para el pozo global).
    */
   async getGlobalSymbols(): Promise<Symbol[]> {
     const symbols = await this.symbolModel.findAll({
@@ -217,13 +223,17 @@ export class PlaysService {
 
   /**
    * Obtener símbolos de un bar formateados para el frontend.
+   * Incluye globales + específicos del bar, solo activos.
    */
   async getBarSymbolsForDisplay(barId: string): Promise<
     Array<{
       id: string;
       name: string;
       imageUrl: string;
+      weight: number;
       hasPrize: boolean;
+      isGlobal: boolean;
+      isJackpot: boolean;
     }>
   > {
     const symbols = await this.getBarSymbols(barId);
@@ -232,7 +242,10 @@ export class PlaysService {
       id: s.id,
       name: s.name,
       imageUrl: s.imageUrl,
+      weight: s.weight,
       hasPrize: !!s.prizeId,
+      isGlobal: s.barId === null,
+      isJackpot: s.isJackpot,
     }));
   }
 
