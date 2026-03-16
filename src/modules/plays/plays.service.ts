@@ -116,8 +116,25 @@ export class PlaysService {
   /**
    * Generar un resultado aleatorio basado en los pesos de los símbolos.
    * Retorna 5 símbolos. Gana si los 5 son iguales.
+   * Si FORCE_WIN=true en el entorno, siempre retorna victoria (solo para testing).
    */
   generatePlayResult(symbols: Symbol[]): GeneratedResult {
+    if (process.env.FORCE_WIN === 'true') {
+      const winSymbol = symbols[0];
+      const resultSymbols = Array(5).fill(winSymbol) as Symbol[];
+      return {
+        symbolIds: resultSymbols.map((s) => s.id),
+        symbolDetails: resultSymbols.map((s) => ({
+          id: s.id,
+          name: s.name,
+          imageUrl: s.imageUrl,
+        })),
+        isWinner: true,
+        matchCount: 5,
+        winningSymbol: winSymbol,
+      };
+    }
+
     const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
     const resultSymbols: Symbol[] = [];
 
@@ -180,12 +197,19 @@ export class PlaysService {
 
   /**
    * Obtener premio asociado a un símbolo ganador.
+   * Lanza BadRequestException si el premio existe pero no está activo.
    */
   async getPrizeForSymbol(symbol: Symbol | null): Promise<Prize | null> {
     if (!symbol || !symbol.prizeId) {
       return null;
     }
-    return this.prizeModel.findByPk(symbol.prizeId);
+    const prize = await this.prizeModel.findByPk(symbol.prizeId);
+    if (prize && !prize.isActive) {
+      throw new BadRequestException(
+        `El premio "${prize.name}" no está disponible actualmente.`,
+      );
+    }
+    return prize;
   }
 
   /**

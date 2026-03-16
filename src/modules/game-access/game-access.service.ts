@@ -57,6 +57,7 @@ export interface PlayResultResponse {
     name: string;
     type: string;
     value?: number;
+    imageUrl?: string;
     claimCode?: string;
   } | null;
   session: {
@@ -219,6 +220,7 @@ export class GameAccessService {
             name: prize.name,
             type: prize.type,
             value: prize.value ?? undefined,
+            imageUrl: prize.imageUrl ?? undefined,
             claimCode,
           }
         : null,
@@ -329,6 +331,7 @@ export class GameAccessService {
             name: prize.name,
             type: prize.type,
             value: prize.value ?? undefined,
+            imageUrl: prize.imageUrl ?? undefined,
             claimCode,
           }
         : null,
