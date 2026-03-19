@@ -59,6 +59,7 @@ export interface PlayResultResponse {
     value?: number;
     imageUrl?: string;
     claimCode?: string;
+    claimQrCode?: string;
   } | null;
   session: {
     playsRemaining: number;
@@ -192,8 +193,9 @@ export class GameAccessService {
       prizeId: prize?.id,
     });
 
-    // Si ganó, crear claim del premio
+    // Si ganó, crear claim del premio y generar QR
     let claimCode: string | undefined;
+    let claimQrCode: string | undefined;
     if (prize) {
       const claim = await this.playsService.createPrizeClaim(
         play.id,
@@ -202,6 +204,7 @@ export class GameAccessService {
         prize.id,
       );
       claimCode = claim.claimCode;
+      claimQrCode = await this.playsService.generateClaimQrCode(claimCode);
     }
 
     this.logger.log(
@@ -222,6 +225,7 @@ export class GameAccessService {
             value: prize.value ?? undefined,
             imageUrl: prize.imageUrl ?? undefined,
             claimCode,
+            claimQrCode,
           }
         : null,
       session: {
@@ -296,8 +300,9 @@ export class GameAccessService {
     // Distribuir pago según porcentajes
     await this.distributePayment(bar, playCost);
 
-    // Crear claim si ganó
+    // Crear claim si ganó y generar QR
     let claimCode: string | undefined;
+    let claimQrCode: string | undefined;
     if (prize) {
       const claim = await this.playsService.createPrizeClaim(
         play.id,
@@ -306,6 +311,7 @@ export class GameAccessService {
         prize.id,
       );
       claimCode = claim.claimCode;
+      claimQrCode = await this.playsService.generateClaimQrCode(claimCode);
     }
 
     // Obtener estado actualizado de jugadas diarias
@@ -333,6 +339,7 @@ export class GameAccessService {
             value: prize.value ?? undefined,
             imageUrl: prize.imageUrl ?? undefined,
             claimCode,
+            claimQrCode,
           }
         : null,
       session: {

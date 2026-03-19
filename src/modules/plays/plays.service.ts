@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Op } from 'sequelize';
+import * as QRCode from 'qrcode';
 import { Play, PlayType, PlayResult } from './entities/play.entity';
 import { Symbol } from '../symbols/entities/symbol.entity';
 import { Prize } from '../prizes/entities/prize.entity';
@@ -210,6 +211,21 @@ export class PlaysService {
       );
     }
     return prize;
+  }
+
+  /**
+   * Generar QR en formato Data URL (base64) para un código de reclamo.
+   */
+  async generateClaimQrCode(claimCode: string): Promise<string> {
+    return QRCode.toDataURL(claimCode, {
+      width: 300,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#ffffff',
+      },
+      errorCorrectionLevel: 'H',
+    });
   }
 
   /**
