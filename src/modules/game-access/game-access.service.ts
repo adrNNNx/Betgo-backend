@@ -440,8 +440,11 @@ export class GameAccessService {
     // === Generar resultado (puro) ===
     const symbols = await this.playsService.getGlobalSymbols();
     const result = this.playsService.generatePlayResult(symbols);
-    const isJackpotWinner =
-      result.isWinner && !!result.winningSymbol?.isJackpot;
+
+    // En jugadas de pozo, cualquier 5-match gana el jackpot.
+    // Los símbolos globales tienen isJackpot=true (se fuerza al crear),
+    // pero esta lógica es defensiva por si hay datos legacy.
+    const isJackpotWinner = result.isWinner;
 
     // === Transacción atómica ===
     const txResult = await this.sequelize.transaction(async (transaction) => {
