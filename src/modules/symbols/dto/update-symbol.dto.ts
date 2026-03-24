@@ -1,3 +1,4 @@
+// src/modules/symbols/dto/update-symbol.dto.ts
 import { PartialType } from '@nestjs/mapped-types';
 import { CreateSymbolDto } from './create-symbol.dto';
 

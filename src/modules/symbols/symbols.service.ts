@@ -1,26 +1,221 @@
-import { Injectable } from '@nestjs/common';
+// src/modules/symbols/symbols.service.ts
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Op } from 'sequelize';
+import { Symbol } from './entities/symbol.entity';
+import { Bar } from '../bars/entities/bar.entity';
+import { Prize } from '../prizes/entities/prize.entity';
 import { CreateSymbolDto } from './dto/create-symbol.dto';
 import { UpdateSymbolDto } from './dto/update-symbol.dto';
 
 @Injectable()
 export class SymbolsService {
-  create(createSymbolDto: CreateSymbolDto) {
-    return 'This action adds a new symbol';
+  private readonly logger = new Logger(SymbolsService.name);
+
+  constructor(
+    @InjectModel(Symbol)
+    private readonly symbolModel: typeof Symbol,
+    @InjectModel(Bar)
+    private readonly barModel: typeof Bar,
+    @InjectModel(Prize)
+    private readonly prizeModel: typeof Prize,
+  ) {}
+
+  /**
+   * Crear un símbolo.
+   *
+   * REGLA DE NEGOCIO:
+   *  - barId = null → símbolo GLOBAL → isJackpot = true (automático)
+   *  - barId = uuid → símbolo LOCAL del bar → isJackpot = false (automático)
+   *
+   * El usuario NO controla isJackpot; se deriva del barId.
+   */
+  async create(dto: CreateSymbolDto): Promise<Symbol> {
+    // Validar que el bar existe si se proporcionó
+    if (dto.barId) {
+      const bar = await this.barModel.findByPk(dto.barId);
+      if (!bar) {
+        throw new BadRequestException(
+          `Bar con ID "${dto.barId}" no encontrado.`,
+        );
+      }
+    }
+
+    // Validar que el premio existe si se proporcionó
+    if (dto.prizeId) {
+      const prize = await this.prizeModel.findByPk(dto.prizeId);
+      if (!prize) {
+        throw new BadRequestException(
+          `Premio con ID "${dto.prizeId}" no encontrado.`,
+        );
+      }
+    }
+
+    const isGlobal = !dto.barId;
+
+    const symbol = await this.symbolModel.create({
+      name: dto.name,
+      imageUrl: dto.imageUrl,
+      barId: dto.barId ?? null,
+      prizeId: dto.prizeId ?? null,
+      weight: dto.weight ?? 100,
+      isJackpot: isGlobal,
+      displayOrder: dto.displayOrder ?? 0,
+      isActive: dto.isActive ?? true,
+    });
+
+    this.logger.log(
+      `Símbolo creado: "${symbol.name}" (${isGlobal ? 'GLOBAL/Jackpot' : `Bar: ${dto.barId}`}), peso: ${symbol.weight}`,
+    );
+
+    return symbol;
   }
 
-  findAll() {
-    return `This action returns all symbols`;
+  /**
+   * Actualizar un símbolo.
+   * Si barId cambia, isJackpot se recalcula automáticamente.
+   */
+  async update(id: string, dto: UpdateSymbolDto): Promise<Symbol> {
+    const symbol = await this.findOne(id);
+
+    if (dto.barId !== undefined && dto.barId !== null) {
+      const bar = await this.barModel.findByPk(dto.barId);
+      if (!bar) {
+        throw new BadRequestException(
+          `Bar con ID "${dto.barId}" no encontrado.`,
+        );
+      }
+    }
+
+    if (dto.prizeId !== undefined && dto.prizeId !== null) {
+      const prize = await this.prizeModel.findByPk(dto.prizeId);
+      if (!prize) {
+        throw new BadRequestException(
+          `Premio con ID "${dto.prizeId}" no encontrado.`,
+        );
+      }
+    }
+
+    // Si barId se modifica, recalcular isJackpot
+    const updateData: any = { ...dto };
+    if ('barId' in dto) {
+      const willBeGlobal = !dto.barId;
+      updateData.isJackpot = willBeGlobal;
+    }
+
+    await symbol.update(updateData);
+
+    this.logger.log(
+      `Símbolo actualizado: "${symbol.name}" (ID: ${symbol.id})`,
+    );
+
+    return symbol;
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} symbol`;
+  /**
+   * Listar símbolos con filtros opcionales.
+   */
+  async findAll(filters?: {
+    barId?: string | null;
+    isActive?: boolean;
+    isGlobal?: boolean;
+  }): Promise<Symbol[]> {
+    const where: any = {};
+
+    if (filters?.barId !== undefined) {
+      where.barId = filters.barId;
+    }
+
+    if (filters?.isGlobal === true) {
+      where.barId = null;
+    }
+
+    if (filters?.isActive !== undefined) {
+      where.isActive = filters.isActive;
+    }
+
+    return this.symbolModel.findAll({
+      where,
+      order: [
+        ['barId', 'ASC NULLS FIRST'],
+        ['displayOrder', 'ASC'],
+        ['weight', 'DESC'],
+      ],
+      include: [
+        { model: Bar, attributes: ['id', 'name', 'slug'] },
+        { model: Prize, attributes: ['id', 'name', 'type'] },
+      ],
+    });
   }
 
-  update(id: number, updateSymbolDto: UpdateSymbolDto) {
-    return `This action updates a #${id} symbol`;
+  /**
+   * Obtener un símbolo por ID.
+   */
+  async findOne(id: string): Promise<Symbol> {
+    const symbol = await this.symbolModel.findByPk(id, {
+      include: [
+        { model: Bar, attributes: ['id', 'name', 'slug'] },
+        { model: Prize, attributes: ['id', 'name', 'type', 'value'] },
+      ],
+    });
+
+    if (!symbol) {
+      throw new NotFoundException(`Símbolo con ID "${id}" no encontrado.`);
+    }
+
+    return symbol;
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} symbol`;
+  /**
+   * Obtener símbolos de un bar (globales + locales, solo activos).
+   */
+  async findByBar(barId: string): Promise<Symbol[]> {
+    return this.symbolModel.findAll({
+      where: {
+        [Op.or]: [{ barId: null }, { barId }],
+        isActive: true,
+      },
+      order: [['weight', 'DESC']],
+      include: [{ model: Prize, required: false }],
+    });
+  }
+
+  /**
+   * Obtener solo símbolos globales (pozo).
+   */
+  async findGlobal(): Promise<Symbol[]> {
+    return this.symbolModel.findAll({
+      where: { barId: null, isActive: true },
+      order: [['weight', 'DESC']],
+      include: [{ model: Prize, required: false }],
+    });
+  }
+
+  /**
+   * Activar/desactivar un símbolo.
+   */
+  async toggleActive(id: string): Promise<Symbol> {
+    const symbol = await this.findOne(id);
+    await symbol.update({ isActive: !symbol.isActive });
+
+    this.logger.log(
+      `Símbolo "${symbol.name}" ${symbol.isActive ? 'activado' : 'desactivado'}`,
+    );
+
+    return symbol;
+  }
+
+  /**
+   * Eliminar un símbolo.
+   */
+  async remove(id: string): Promise<void> {
+    const symbol = await this.findOne(id);
+    await symbol.destroy();
+    this.logger.log(`Símbolo "${symbol.name}" eliminado (ID: ${id})`);
   }
 }
