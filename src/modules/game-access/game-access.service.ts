@@ -657,6 +657,10 @@ export class GameAccessService {
     return this.playsService.getBarSymbolsForDisplay(bar.id);
   }
 
+  async getGlobalSymbolsForDisplay() {
+    return this.playsService.getGlobalSymbolsForDisplay();
+  }
+
   // ==================== PRIVADOS ====================
 
   private async getUser(userId: string): Promise<User> {

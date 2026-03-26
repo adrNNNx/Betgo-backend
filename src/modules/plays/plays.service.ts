@@ -316,6 +316,32 @@ export class PlaysService {
     }));
   }
 
+  /**
+   * Obtener solo símbolos globales para mostrar en la UI del pozo global.
+   * Solo retorna símbolos con bar_id IS NULL.
+   */
+  async getGlobalSymbolsForDisplay(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      imageUrl: string;
+      weight: number;
+      hasPrize: boolean;
+      isJackpot: boolean;
+    }>
+  > {
+    const symbols = await this.getGlobalSymbols();
+
+    return symbols.map((s) => ({
+      id: s.id,
+      name: s.name,
+      imageUrl: s.imageUrl,
+      weight: s.weight,
+      hasPrize: !!s.prizeId,
+      isJackpot: s.isJackpot,
+    }));
+  }
+
   async getUserPlayHistory(
     userId: string,
     barId?: string,

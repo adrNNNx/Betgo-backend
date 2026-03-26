@@ -65,6 +65,16 @@ export class GameAccessController {
   }
 
   /**
+   * Símbolos globales para mostrar en el juego del pozo global.
+   * Solo retorna símbolos sin bar asociado (bar_id IS NULL).
+   * GET /game/pool/symbols
+   */
+  @Get('pool/symbols')
+  async getPoolSymbols() {
+    return this.gameAccessService.getGlobalSymbolsForDisplay();
+  }
+
+  /**
    * Resumen de jugadas del día del usuario.
    * GET /game/my-plays-today
    */
