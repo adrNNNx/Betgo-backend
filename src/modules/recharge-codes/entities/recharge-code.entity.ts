@@ -9,6 +9,7 @@ import {
   CreatedAt,
   BeforeCreate,
 } from 'sequelize-typescript';
+import { randomInt } from 'crypto';
 import { User } from '../../users/entities/user.entity';
 import { Staff } from '../../staff/entities/staff.entity';
 
@@ -144,23 +145,24 @@ export class RechargeCode extends Model<
 
   @BeforeCreate
   static generateCode(instance: RechargeCode) {
-    if (!instance.code) {
+    if (!instance.getDataValue('code')) {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       let code = '';
-
       for (let i = 0; i < 8; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+        code += chars.charAt(randomInt(0, chars.length));
       }
-
-      instance.code = code;
+      instance.setDataValue('code', code);
     }
 
-    if (!instance.qrData) {
-      instance.qrData = JSON.stringify({
-        code: instance.code,
-        userId: instance.userId,
-        type: 'recharge',
-      });
+    if (!instance.getDataValue('qrData')) {
+      instance.setDataValue(
+        'qrData',
+        JSON.stringify({
+          code: instance.getDataValue('code'),
+          userId: instance.getDataValue('userId'),
+          type: 'recharge',
+        }),
+      );
     }
   }
 

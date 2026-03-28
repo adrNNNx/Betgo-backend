@@ -1,34 +1,91 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+// src/modules/recharge-codes/recharge-codes.controller.ts
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { RechargeCodesService } from './recharge-codes.service';
-import { CreateRechargeCodeDto } from './dto/create-recharge-code.dto';
-import { UpdateRechargeCodeDto } from './dto/update-recharge-code.dto';
+import { CurrentUser } from '../auth/decorators';
+import { User } from '../users/entities/user.entity';
+import { ValidateCodeDto, LoadBalanceDto } from './dto/recharge-code.dto';
 
 @Controller('recharge-codes')
 export class RechargeCodesController {
-  constructor(private readonly rechargeCodesService: RechargeCodesService) {}
+  constructor(
+    private readonly rechargeCodesService: RechargeCodesService,
+  ) {}
 
-  @Post()
-  create(@Body() createRechargeCodeDto: CreateRechargeCodeDto) {
-    return this.rechargeCodesService.create(createRechargeCodeDto);
+  // ==================== ENDPOINTS DEL USUARIO ====================
+
+  /**
+   * Generar código de recarga.
+   * POST /recharge-codes/generate
+   *
+   * El usuario genera un código QR que el mozo escanea.
+   * Invalida cualquier código pendiente anterior del usuario.
+   * El código expira en 90 segundos.
+   */
+  @Post('generate')
+  @HttpCode(HttpStatus.CREATED)
+  async generateCode(@CurrentUser() user: User) {
+    return this.rechargeCodesService.generateCode(user.id);
   }
 
-  @Get()
-  findAll() {
-    return this.rechargeCodesService.findAll();
+  /**
+   * Consultar estado de un código (polling).
+   * GET /recharge-codes/status/:code
+   *
+   * El frontend hace polling cada ~3s para detectar cuando
+   * el mozo carga el saldo (status cambia de 'pending' a 'used').
+   */
+  @Get('status/:code')
+  async getCodeStatus(
+    @Param('code') code: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.rechargeCodesService.getCodeStatus(code, user.id);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.rechargeCodesService.findOne(+id);
+  // ==================== ENDPOINTS DEL MOZO ====================
+
+  /**
+   * Validar código de recarga (mozo escanea o ingresa manualmente).
+   * POST /recharge-codes/validate
+   *
+   * Retorna info del usuario para que el mozo confirme la identidad
+   * antes de cargar saldo.
+   */
+  @Post('validate')
+  @HttpCode(HttpStatus.OK)
+  async validateCode(@Body() dto: ValidateCodeDto) {
+    return this.rechargeCodesService.validateCode(dto.code);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateRechargeCodeDto: UpdateRechargeCodeDto) {
-    return this.rechargeCodesService.update(+id, updateRechargeCodeDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.rechargeCodesService.remove(+id);
+  /**
+   * Ejecutar carga de saldo (mozo confirma).
+   * POST /recharge-codes/load
+   *
+   * Transacción atómica: acredita saldo, marca código como usado,
+   * registra la transacción.
+   */
+  @Post('load')
+  @HttpCode(HttpStatus.OK)
+  async loadBalance(
+    @Body() dto: LoadBalanceDto,
+    @CurrentUser() user: User,
+  ) {
+    // El user aquí es el staff autenticado — buscar su staffId
+    // En el flujo actual, el staff se autentica con su usuario vinculado
+    return this.rechargeCodesService.loadBalance(
+      dto.code,
+      dto.amount,
+      dto.paymentMethod,
+      user.id, // Se usa como staffId lookup en el service
+      dto.notes,
+    );
   }
 }
