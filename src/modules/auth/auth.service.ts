@@ -209,7 +209,7 @@ export class AuthService {
 
     return {
       accessToken,
-      refreshToken: newRefreshToken, // ✅ Retornar también el nuevo refresh token
+      refreshToken: newRefreshToken, // Retornar también el nuevo refresh token
       expiresIn: this.getAccessTokenExpiryInSeconds(),
     };
   }

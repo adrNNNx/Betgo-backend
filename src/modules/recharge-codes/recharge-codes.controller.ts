@@ -9,8 +9,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { RechargeCodesService } from './recharge-codes.service';
-import { CurrentUser } from '../auth/decorators';
-import { User } from '../users/entities/user.entity';
+import { CurrentUser, Roles } from '../auth/decorators';
+import { User, UserRole } from '../users/entities/user.entity';
 import { ValidateCodeDto, LoadBalanceDto } from './dto/recharge-code.dto';
 
 @Controller('recharge-codes')
@@ -56,11 +56,12 @@ export class RechargeCodesController {
    * Validar código de recarga (mozo escanea o ingresa manualmente).
    * POST /recharge-codes/validate
    *
-   * Retorna info del usuario para que el mozo confirme la identidad
-   * antes de cargar saldo.
+   * Solo accesible para STAFF y ADMIN.
+   * Retorna info del usuario para que el mozo confirme la identidad.
    */
   @Post('validate')
   @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.STAFF, UserRole.ADMIN)
   async validateCode(@Body() dto: ValidateCodeDto) {
     return this.rechargeCodesService.validateCode(dto.code);
   }
@@ -69,11 +70,13 @@ export class RechargeCodesController {
    * Ejecutar carga de saldo (mozo confirma).
    * POST /recharge-codes/load
    *
+   * Solo accesible para STAFF y ADMIN.
    * Transacción atómica: acredita saldo, marca código como usado,
    * registra la transacción.
    */
   @Post('load')
   @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.STAFF, UserRole.ADMIN)
   async loadBalance(
     @Body() dto: LoadBalanceDto,
     @CurrentUser() user: User,

@@ -1,34 +1,24 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+// src/modules/staff/staff.controller.ts
+import { Controller, Get } from '@nestjs/common';
 import { StaffService } from './staff.service';
-import { CreateStaffDto } from './dto/create-staff.dto';
-import { UpdateStaffDto } from './dto/update-staff.dto';
+import { CurrentUser, Roles } from '../auth/decorators';
+import { User, UserRole } from '../users/entities/user.entity';
 
 @Controller('staff')
 export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 
-  @Post()
-  create(@Body() createStaffDto: CreateStaffDto) {
-    return this.staffService.create(createStaffDto);
-  }
-
-  @Get()
-  findAll() {
-    return this.staffService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.staffService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateStaffDto: UpdateStaffDto) {
-    return this.staffService.update(+id, updateStaffDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.staffService.remove(+id);
+  /**
+   * Obtener perfil del staff del usuario autenticado.
+   * GET /staff/me
+   *
+   * Retorna: { id, role, bar: { id, name, slug, logoUrl }, user: { id, name, phone } }
+   *
+   * Solo accesible para usuarios con rol STAFF o ADMIN.
+   */
+  @Get('me')
+  @Roles(UserRole.STAFF, UserRole.ADMIN)
+  async getMyProfile(@CurrentUser() user: User) {
+    return this.staffService.getMyProfile(user.id);
   }
 }

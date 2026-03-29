@@ -1,26 +1,61 @@
-import { Injectable } from '@nestjs/common';
-import { CreateStaffDto } from './dto/create-staff.dto';
-import { UpdateStaffDto } from './dto/update-staff.dto';
+// src/modules/staff/staff.service.ts
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Staff } from './entities/staff.entity';
+import { Bar } from '../bars/entities/bar.entity';
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class StaffService {
-  create(createStaffDto: CreateStaffDto) {
-    return 'This action adds a new staff';
-  }
+  constructor(
+    @InjectModel(Staff)
+    private readonly staffModel: typeof Staff,
+  ) {}
 
-  findAll() {
-    return `This action returns all staff`;
-  }
+  /**
+   * Obtener perfil del staff por userId (del JWT).
+   * Incluye info del bar asignado y datos del usuario.
+   *
+   * Este endpoint es llamado por el panel del mozo al cargar
+   * para saber a qué bar pertenece y mostrar el contexto.
+   */
+  async getMyProfile(userId: string) {
+    const staff = await this.staffModel.findOne({
+      where: { userId, isActive: true },
+      include: [
+        {
+          model: Bar,
+          attributes: ['id', 'name', 'slug', 'logoUrl'],
+        },
+        {
+          model: User,
+          attributes: ['id', 'name', 'phone', 'email'],
+        },
+      ],
+    });
 
-  findOne(id: number) {
-    return `This action returns a #${id} staff`;
-  }
+    if (!staff) {
+      throw new NotFoundException(
+        'No tienes un perfil de staff activo asignado.',
+      );
+    }
 
-  update(id: number, updateStaffDto: UpdateStaffDto) {
-    return `This action updates a #${id} staff`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} staff`;
+    return {
+      id: staff.id,
+      role: staff.role,
+      bar: staff.bar
+        ? {
+            id: staff.bar.id,
+            name: staff.bar.name,
+            slug: staff.bar.slug,
+            logoUrl: staff.bar.logoUrl,
+          }
+        : null,
+      user: {
+        id: staff.user.id,
+        name: staff.user.name,
+        phone: staff.user.phone,
+      },
+    };
   }
 }
