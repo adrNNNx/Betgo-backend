@@ -1,5 +1,9 @@
 // src/modules/staff/staff.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Staff } from './entities/staff.entity';
 import { Bar } from '../bars/entities/bar.entity';
@@ -11,6 +15,25 @@ export class StaffService {
     @InjectModel(Staff)
     private readonly staffModel: typeof Staff,
   ) {}
+
+  /**
+   * Uso interno — para que otros servicios (ej. PrizeClaimsService)
+   * resuelvan el Staff activo a partir del userId del JWT.
+   * Lanza ForbiddenException si no existe o está inactivo.
+   */
+  async findActiveByUserId(userId: string): Promise<Staff> {
+    const staff = await this.staffModel.findOne({
+      where: { userId, isActive: true },
+    });
+
+    if (!staff) {
+      throw new ForbiddenException(
+        'No tienes permisos de staff o tu cuenta está inactiva.',
+      );
+    }
+
+    return staff;
+  }
 
   /**
    * Obtener perfil del staff por userId (del JWT).

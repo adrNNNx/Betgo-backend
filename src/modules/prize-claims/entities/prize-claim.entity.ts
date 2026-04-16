@@ -9,6 +9,7 @@ import {
   CreatedAt,
   BeforeCreate,
 } from 'sequelize-typescript';
+import { randomInt } from 'crypto';
 import { User } from '../../users/entities/user.entity';
 import { Bar } from '../../bars/entities/bar.entity';
 import { Prize } from '../../prizes/entities/prize.entity';
@@ -163,7 +164,7 @@ export class PrizeClaim extends Model<
       let code = 'P-';
 
       for (let i = 0; i < 8; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+        code += chars.charAt(randomInt(0, chars.length));
       }
 
       instance.claimCode = code;
