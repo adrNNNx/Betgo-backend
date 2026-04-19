@@ -19,6 +19,8 @@ import { PoolMovementsModule } from './modules/pool-movements/pool-movements.mod
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { GameAccessModule } from './modules/game-access/game-access.module';
+import { CloudinaryModule } from './modules/cloudinary/cloudinary.module';
+import { BannersModule } from './modules/banners/banners.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { GameAccessModule } from './modules/game-access/game-access.module';
     AuditLogsModule,
     AuthModule,
     GameAccessModule,
+    CloudinaryModule,
+    BannersModule,
   ],
   controllers: [AppController],
   providers: [AppService],
