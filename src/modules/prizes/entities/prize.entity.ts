@@ -24,11 +24,12 @@ interface PrizeCreationAttributes {
   name: string;
   type: PrizeType;
 
-  barId?: string;
-  description?: string;
-  value?: number;
-  stock?: number;
-  imageUrl?: string;
+  barId?: string | null;
+  description?: string | null;
+  value?: number | null;
+  stock?: number | null;
+  imageUrl?: string | null;
+  publicId?: string | null;
   isActive?: boolean;
 }
 
@@ -93,6 +94,13 @@ export class Prize extends Model<Prize, PrizeCreationAttributes> {
     field: 'image_url',
   })
   declare imageUrl: string | null;
+
+  @Column({
+    type: DataType.STRING(255),
+    allowNull: true,
+    field: 'public_id',
+  })
+  declare publicId: string | null;
 
   @Column({
     type: DataType.BOOLEAN,
