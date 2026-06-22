@@ -10,12 +10,19 @@ import { Op } from 'sequelize';
 import { Bar } from './entities/bar.entity';
 import { CreateBarDto } from './dto/create-bar.dto';
 import { UpdateBarDto } from './dto/update-bar.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+
+const BARS_FOLDER_DEFAULT = 'betgo/bars';
 
 @Injectable()
 export class BarsService {
+  private readonly folder =
+    process.env.CLOUDINARY_BARS_FOLDER || BARS_FOLDER_DEFAULT;
+
   constructor(
     @InjectModel(Bar)
     private barModel: typeof Bar,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   async create(createBarDto: CreateBarDto): Promise<Bar> {
@@ -148,9 +155,30 @@ export class BarsService {
     return bar;
   }
 
-  async updateLogo(id: string, logoUrl: string): Promise<Bar> {
+  /**
+   * Sube/reemplaza el logo del bar: sube la nueva imagen a Cloudinary,
+   * actualiza el registro y elimina la anterior (si existía).
+   */
+  async updateLogo(id: string, file: Express.Multer.File): Promise<Bar> {
     const bar = await this.findOne(id);
-    await bar.update({ logoUrl });
+    const oldPublicId = bar.logoPublicId;
+
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.buffer,
+      this.folder,
+    );
+
+    try {
+      await bar.update({
+        logoUrl: uploaded.url,
+        logoPublicId: uploaded.publicId,
+      });
+    } catch (error) {
+      await this.cloudinaryService.deleteImage(uploaded.publicId);
+      throw error;
+    }
+
+    if (oldPublicId) await this.cloudinaryService.deleteImage(oldPublicId);
     return bar;
   }
 

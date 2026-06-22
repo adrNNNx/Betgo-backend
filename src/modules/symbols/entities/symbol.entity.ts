@@ -15,6 +15,7 @@ import { Prize } from '../../prizes/entities/prize.entity';
 interface SymbolCreationAttributes {
   name: string;
   imageUrl: string;
+  publicId?: string | null;
 
   barId?: string | null;
   prizeId?: string | null;
@@ -60,6 +61,13 @@ export class Symbol extends Model<Symbol, SymbolCreationAttributes> {
     field: 'image_url',
   })
   declare imageUrl: string;
+
+  @Column({
+    type: DataType.STRING(255),
+    allowNull: true,
+    field: 'public_id',
+  })
+  declare publicId: string | null;
 
   @Column({
     type: DataType.INTEGER,

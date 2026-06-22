@@ -12,10 +12,15 @@ import { Bar } from '../bars/entities/bar.entity';
 import { Prize } from '../prizes/entities/prize.entity';
 import { CreateSymbolDto } from './dto/create-symbol.dto';
 import { UpdateSymbolDto } from './dto/update-symbol.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+
+const SYMBOLS_FOLDER_DEFAULT = 'betgo/symbols';
 
 @Injectable()
 export class SymbolsService {
   private readonly logger = new Logger(SymbolsService.name);
+  private readonly folder =
+    process.env.CLOUDINARY_SYMBOLS_FOLDER || SYMBOLS_FOLDER_DEFAULT;
 
   constructor(
     @InjectModel(Symbol)
@@ -24,6 +29,7 @@ export class SymbolsService {
     private readonly barModel: typeof Bar,
     @InjectModel(Prize)
     private readonly prizeModel: typeof Prize,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
@@ -197,6 +203,35 @@ export class SymbolsService {
   }
 
   /**
+   * Subir/reemplazar la imagen del símbolo: sube la nueva a Cloudinary,
+   * actualiza el registro y elimina la anterior (si era una imagen subida).
+   */
+  async replaceImage(id: string, file: Express.Multer.File): Promise<Symbol> {
+    const symbol = await this.findOne(id);
+    const oldPublicId = symbol.publicId;
+
+    const uploaded = await this.cloudinaryService.uploadImage(
+      file.buffer,
+      this.folder,
+    );
+
+    try {
+      await symbol.update({
+        imageUrl: uploaded.url,
+        publicId: uploaded.publicId,
+      });
+    } catch (error) {
+      await this.cloudinaryService.deleteImage(uploaded.publicId);
+      throw error;
+    }
+
+    if (oldPublicId) await this.cloudinaryService.deleteImage(oldPublicId);
+    this.logger.log(`Imagen de símbolo reemplazada (ID: ${id})`);
+
+    return symbol;
+  }
+
+  /**
    * Activar/desactivar un símbolo.
    */
   async toggleActive(id: string): Promise<Symbol> {
@@ -215,7 +250,11 @@ export class SymbolsService {
    */
   async remove(id: string): Promise<void> {
     const symbol = await this.findOne(id);
+    const publicId = symbol.publicId;
+
     await symbol.destroy();
+    if (publicId) await this.cloudinaryService.deleteImage(publicId);
+
     this.logger.log(`Símbolo "${symbol.name}" eliminado (ID: ${id})`);
   }
 }

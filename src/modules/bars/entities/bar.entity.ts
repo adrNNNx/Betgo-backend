@@ -27,6 +27,7 @@ interface BarCreationAttributes {
   phone?: string;
   email?: string;
   logoUrl?: string;
+  logoPublicId?: string;
   freePlaysPerDay?: number;
   barPercentage?: number;
   poolPercentage?: number;
@@ -92,6 +93,13 @@ export class Bar extends Model<Bar, BarCreationAttributes> {
     field: 'logo_url',
   })
   declare logoUrl: string;
+
+  @Column({
+    type: DataType.STRING(255),
+    allowNull: true,
+    field: 'logo_public_id',
+  })
+  declare logoPublicId: string | null;
 
   @Column({
     type: DataType.DECIMAL(12, 2),

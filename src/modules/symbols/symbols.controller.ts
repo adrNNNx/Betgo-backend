@@ -9,10 +9,16 @@ import {
   Param,
   Query,
   ParseUUIDPipe,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SymbolsService } from './symbols.service';
 import { CreateSymbolDto } from './dto/create-symbol.dto';
 import { UpdateSymbolDto } from './dto/update-symbol.dto';
+import { ImageFilePipe } from '../banners/pipes/image-file.pipe';
+
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024; // 3MB — corte temprano en multer
 
 @Controller('symbols')
 export class SymbolsController {
@@ -86,6 +92,21 @@ export class SymbolsController {
     @Body() dto: UpdateSymbolDto,
   ) {
     return this.symbolsService.update(id, dto);
+  }
+
+  /**
+   * Subir/reemplazar la imagen del símbolo.
+   * PATCH /symbols/:id/image  (multipart/form-data, campo 'file')
+   */
+  @Patch(':id/image')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_BYTES } }),
+  )
+  replaceImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile(ImageFilePipe) file: Express.Multer.File,
+  ) {
+    return this.symbolsService.replaceImage(id, file);
   }
 
   /**

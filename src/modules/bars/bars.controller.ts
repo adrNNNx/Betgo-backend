@@ -12,14 +12,20 @@ import {
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { BarsService } from './bars.service';
 import { BarQRService } from './services/bar-qr.service';
 import { CreateBarDto } from './dto/create-bar.dto';
 import { UpdateBarDto } from './dto/update-bar.dto';
+import { ImageFilePipe } from '../banners/pipes/image-file.pipe';
 import { Public, Roles } from '../auth/decorators';
 import { UserRole } from '../users/entities/user.entity';
+
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024; // 3MB — corte temprano en multer
 
 @Controller('bars')
 export class BarsController {
@@ -90,13 +96,20 @@ export class BarsController {
     return this.barsService.updateFreePlays(id, body.freePlaysPerDay);
   }
 
+  /**
+   * Subir/reemplazar el logo del bar.
+   * PATCH /bars/:id/logo  (multipart/form-data, campo 'file')
+   */
   @Roles(UserRole.ADMIN)
   @Patch(':id/logo')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_BYTES } }),
+  )
   updateLogo(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { logoUrl: string },
+    @UploadedFile(ImageFilePipe) file: Express.Multer.File,
   ) {
-    return this.barsService.updateLogo(id, body.logoUrl);
+    return this.barsService.updateLogo(id, file);
   }
 
   @Get(':id/stats')
