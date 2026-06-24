@@ -4,9 +4,14 @@ import { Bar } from './entities/bar.entity';
 import { BarsService } from './bars.service';
 import { BarsController } from './bars.controller';
 import { BarQRService } from './services/bar-qr.service';
+import { GlobalPool } from '../global-pool/entities/global-pool.entity';
+import { PoolMovement } from '../pool-movements/entities/pool-movement.entity';
+import { Transaction } from '../transactions/entities/transaction.entity';
 
 @Module({
-  imports: [SequelizeModule.forFeature([Bar])],
+  imports: [
+    SequelizeModule.forFeature([Bar, GlobalPool, PoolMovement, Transaction]),
+  ],
   controllers: [BarsController],
   providers: [BarsService, BarQRService],
   exports: [BarsService, BarQRService],

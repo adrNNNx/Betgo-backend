@@ -37,6 +37,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "cloudinary": "^2.9.0",
+    "decimal.js": "^10.6.0",
     "dotenv": "^17.2.4",
     "luxon": "^3.7.2",
     "multer": "^2.1.1",

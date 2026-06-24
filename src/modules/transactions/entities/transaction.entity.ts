@@ -20,7 +20,14 @@ export enum TransactionType {
   PRIZE_LOCAL = 'prize_local',
   PRIZE_JACKPOT = 'prize_jackpot',
   BAR_RECHARGE = 'bar_recharge',
+  PLATFORM_REVENUE = 'platform_revenue',
   ADJUSTMENT = 'adjustment',
+}
+
+// ISO 4217. Hoy solo guaraní; agregar valores aquí no requiere migración
+// porque la columna es STRING(3), no un enum de Postgres.
+export enum Currency {
+  PYG = 'PYG',
 }
 
 export enum PaymentMethod {
@@ -40,6 +47,7 @@ interface TransactionCreationAttributes {
   balanceBefore?: number;
   balanceAfter?: number;
   paymentMethod?: PaymentMethod;
+  currency?: Currency;
   reference?: string;
   notes?: string;
 }
@@ -128,6 +136,13 @@ export class Transaction extends Model<
     field: 'payment_method',
   })
   declare paymentMethod: PaymentMethod;
+
+  @Column({
+    type: DataType.STRING(3),
+    allowNull: false,
+    defaultValue: Currency.PYG,
+  })
+  declare currency: Currency;
 
   @Column({
     type: DataType.STRING(100),

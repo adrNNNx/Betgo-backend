@@ -21,6 +21,7 @@ import { BarsService } from './bars.service';
 import { BarQRService } from './services/bar-qr.service';
 import { CreateBarDto } from './dto/create-bar.dto';
 import { UpdateBarDto } from './dto/update-bar.dto';
+import { RechargeBarDto } from './dto/recharge-bar.dto';
 import { ImageFilePipe } from '../banners/pipes/image-file.pipe';
 import { Public, Roles } from '../auth/decorators';
 import { UserRole } from '../users/entities/user.entity';
@@ -78,13 +79,36 @@ export class BarsController {
 
   // ==================== OPERACIONES DE BAR ====================
 
+  /**
+   * Recargar saldo del bar. El monto se distribuye según los porcentajes
+   * del bar (bar / pozo / empresa). Devuelve el desglose aplicado.
+   * POST /bars/:id/recharge  { amount, notes? }
+   */
   @Roles(UserRole.ADMIN)
   @Post(':id/recharge')
   rechargeBalance(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { amount: number; notes?: string },
+    @Body() dto: RechargeBarDto,
   ) {
-    return this.barsService.rechargeBalance(id, body.amount, body.notes);
+    return this.barsService.rechargeBalance(
+      id,
+      dto.amount,
+      dto.notes,
+      dto.currency,
+    );
+  }
+
+  /**
+   * Previsualizar el desglose de una recarga sin aplicarla (para el diálogo).
+   * GET /bars/:id/recharge/preview?amount=50000
+   */
+  @Roles(UserRole.ADMIN)
+  @Get(':id/recharge/preview')
+  previewRecharge(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('amount') amount: string,
+  ) {
+    return this.barsService.previewRecharge(id, Number(amount));
   }
 
   @Roles(UserRole.ADMIN)
@@ -182,5 +206,19 @@ export class BarsController {
   @Get('admin/all-qr')
   getAllBarsWithQR() {
     return this.barQRService.getAllBarsWithQR();
+  }
+
+  /**
+   * KPIs del módulo de bares: ganancia de la empresa y aporte al pozo
+   * (total y por bar). Rango de fechas opcional.
+   * GET /bars/admin/kpis?from=2026-06-01&to=2026-06-30
+   */
+  @Roles(UserRole.ADMIN)
+  @Get('admin/kpis')
+  getPlatformKpis(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.barsService.getPlatformKpis(
+      from ? new Date(from) : undefined,
+      to ? new Date(to) : undefined,
+    );
   }
 }

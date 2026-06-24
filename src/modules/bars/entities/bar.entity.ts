@@ -32,6 +32,7 @@ interface BarCreationAttributes {
   barPercentage?: number;
   poolPercentage?: number;
   platformPercentage?: number;
+  platformEarnings?: number;
   isActive?: boolean;
 }
 
@@ -155,6 +156,19 @@ export class Bar extends Model<Bar, BarCreationAttributes> {
     },
   })
   declare platformPercentage: number;
+
+  // Acumulado de ganancia de la empresa aportado por este bar (KPI).
+  @Column({
+    type: DataType.DECIMAL(14, 2),
+    allowNull: false,
+    defaultValue: 0.0,
+    field: 'platform_earnings',
+    get() {
+      const value = this.getDataValue('platformEarnings');
+      return value ? parseFloat(value) : 0;
+    },
+  })
+  declare platformEarnings: number;
 
   @Column({
     type: DataType.BOOLEAN,
