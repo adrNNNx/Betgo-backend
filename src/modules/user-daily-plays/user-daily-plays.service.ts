@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
+import type { Transaction } from 'sequelize';
 import { UserDailyPlay } from './entities/user-daily-play.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { getTodayInParaguay } from 'src/common/utils/timezone.util';
@@ -198,6 +199,26 @@ export class UserDailyPlaysService {
       order: [['playDate', 'DESC']],
       limit,
     });
+  }
+
+  /**
+   * Propaga un nuevo límite de jugadas gratis a TODOS los registros de HOY
+   * del bar. Necesario porque playsLimit es un snapshot diario: sin esto, los
+   * usuarios que ya iniciaron sesión seguirían con el límite viejo.
+   * Subir el límite reabre jugadas; bajarlo deja el restante en 0 (sin negativos).
+   * Retorna cuántos registros se ajustaron.
+   */
+  async syncTodayLimitForBar(
+    barId: string,
+    newLimit: number,
+    transaction?: Transaction,
+  ): Promise<number> {
+    const today = getTodayInParaguay();
+    const [affected] = await this.userDailyPlayModel.update(
+      { playsLimit: newLimit },
+      { where: { barId, playDate: today }, transaction },
+    );
+    return affected;
   }
 
   // ==================== PRIVADOS ====================

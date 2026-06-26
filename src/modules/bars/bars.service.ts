@@ -23,6 +23,7 @@ import {
   TransactionType,
   Currency,
 } from '../transactions/entities/transaction.entity';
+import { UserDailyPlaysService } from '../user-daily-plays/user-daily-plays.service';
 import Decimal from 'decimal.js';
 
 const BARS_FOLDER_DEFAULT = 'betgo/bars';
@@ -43,6 +44,7 @@ export class BarsService {
     private readonly transactionModel: typeof Transaction,
     private readonly sequelize: Sequelize,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly userDailyPlaysService: UserDailyPlaysService,
   ) {}
 
   async create(createBarDto: CreateBarDto): Promise<Bar> {
@@ -289,7 +291,18 @@ export class BarsService {
       );
     }
 
-    await bar.update({ freePlaysPerDay });
+    // Atómico: cambiar el límite del bar y propagarlo a los registros de HOY,
+    // así los usuarios que ya iniciaron sesión ven el nuevo límite (el snapshot
+    // diario quedaría desactualizado de lo contrario).
+    await this.sequelize.transaction(async (t) => {
+      await bar.update({ freePlaysPerDay }, { transaction: t });
+      await this.userDailyPlaysService.syncTodayLimitForBar(
+        id,
+        freePlaysPerDay,
+        t,
+      );
+    });
+
     return bar;
   }
 
