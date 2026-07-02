@@ -23,12 +23,19 @@ export enum StaffRole {
   SUPER_ADMIN = 'super_admin',
 }
 
+export enum StaffStatus {
+  ACTIVE = 'active',
+  INACTIVE = 'inactive',
+  SUSPENDED = 'suspended',
+}
+
 interface StaffCreationAttributes {
   userId: string;
   role: StaffRole;
 
   barId?: string | null;
   isActive?: boolean;
+  status?: StaffStatus;
 }
 
 @Table({
@@ -75,6 +82,14 @@ export class Staff extends Model<Staff, StaffCreationAttributes> {
     field: 'is_active',
   })
   declare isActive: boolean;
+
+  // Estado de 3 valores para el panel. isActive se deriva de este (ver servicio).
+  @Column({
+    type: DataType.ENUM(...Object.values(StaffStatus)),
+    allowNull: false,
+    defaultValue: StaffStatus.ACTIVE,
+  })
+  declare status: StaffStatus;
 
   @CreatedAt
   @Column({ field: 'created_at' })

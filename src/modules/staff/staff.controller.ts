@@ -1,6 +1,17 @@
 // src/modules/staff/staff.controller.ts
-import { Controller, Get } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { StaffService } from './staff.service';
+import { CreateStaffDto } from './dto/create-staff.dto';
+import { UpdateStaffDto } from './dto/update-staff.dto';
 import { CurrentUser, Roles } from '../auth/decorators';
 import { User, UserRole } from '../users/entities/user.entity';
 
@@ -20,5 +31,38 @@ export class StaffController {
   @Roles(UserRole.STAFF, UserRole.ADMIN)
   async getMyProfile(@CurrentUser() user: User) {
     return this.staffService.getMyProfile(user.id);
+  }
+
+  /**
+   * Listar todo el staff (tabla del panel). Filtro opcional por bar.
+   * GET /staff?barId=
+   */
+  @Get()
+  @Roles(UserRole.ADMIN)
+  findAll(@Query('barId') barId?: string) {
+    return this.staffService.findAll(barId);
+  }
+
+  /**
+   * Alta de staff: crea/vincula al usuario por identifier y lo asocia con role + barId.
+   * POST /staff
+   */
+  @Post()
+  @Roles(UserRole.ADMIN)
+  create(@Body() dto: CreateStaffDto) {
+    return this.staffService.create(dto);
+  }
+
+  /**
+   * Editar staff: name / barId / role / status.
+   * PATCH /staff/:id
+   */
+  @Patch(':id')
+  @Roles(UserRole.ADMIN)
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateStaffDto,
+  ) {
+    return this.staffService.update(id, dto);
   }
 }
