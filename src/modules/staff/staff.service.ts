@@ -14,6 +14,11 @@ import { Bar } from '../bars/entities/bar.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
+import { toDbPhone } from '../../common/utils/phone.util';
+import { RefreshToken } from '../auth/entities/refresh-token.entity';
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Includes reutilizados para devolver la forma que espera la tabla del panel.
 const STAFF_INCLUDES = [
@@ -129,12 +134,12 @@ export class StaffService {
         if (existing) {
           throw new ConflictException('El usuario ya es parte del staff.');
         }
-        if (dto.name && !user.name) {
-          await user.update({ name: dto.name }, { transaction: t });
-        }
-        if (user.role === UserRole.PLAYER) {
-          await user.update({ role: UserRole.STAFF }, { transaction: t });
-        }
+        // Alta = staff ACTIVE: promueve a STAFF si era player, completa el
+        // nombre si faltaba y reactiva el login (user.isActive) por si estaba dado de baja.
+        const userPatch: Partial<User> = { isActive: true };
+        if (dto.name && !user.name) userPatch.name = dto.name;
+        if (user.role === UserRole.PLAYER) userPatch.role = UserRole.STAFF;
+        await user.update(userPatch, { transaction: t });
       } else {
         // Crear (invitar). Sin flujo de reset por email, exigimos password
         // para que el usuario nuevo pueda loguear.
@@ -143,10 +148,10 @@ export class StaffService {
             'El usuario no existe. Enviá "password" para crearlo.',
           );
         }
-        const phone = this.identifierToPhone(dto.identifier);
+        const phone = toDbPhone(dto.identifier);
         if (!phone) {
           throw new BadRequestException(
-            'Para crear un usuario nuevo, el identifier debe ser un teléfono.',
+            'Para crear un usuario nuevo, el identifier debe ser un teléfono válido (ej: 0981234567).',
           );
         }
         // passwordHash crudo: el hook @BeforeCreate del User lo hashea.
@@ -196,15 +201,29 @@ export class StaffService {
       if (dto.role !== undefined) patch.role = dto.role;
       if (dto.status !== undefined) {
         patch.status = dto.status;
+        // Gate de acciones de staff (recargar, entregar premios, etc.): solo ACTIVE.
         patch.isActive = dto.status === StaffStatus.ACTIVE;
       }
       if (Object.keys(patch).length > 0) {
         await staff.update(patch, { transaction: t });
       }
-      if (dto.name !== undefined) {
-        await staff.user.update({ name: dto.name }, { transaction: t });
+
+      // Gate de login (user.isActive): bloqueado solo si SUSPENDED.
+      const userPatch: Partial<User> = {};
+      if (dto.name !== undefined) userPatch.name = dto.name;
+      if (dto.status !== undefined) {
+        userPatch.isActive = dto.status !== StaffStatus.SUSPENDED;
+      }
+      if (Object.keys(userPatch).length > 0) {
+        await staff.user.update(userPatch, { transaction: t });
       }
     });
+
+    // Suspender debe cerrar sesión ya: invalida los refresh tokens emitidos
+    // (el access token dura poco y expira solo).
+    if (dto.status === StaffStatus.SUSPENDED) {
+      await RefreshToken.revokeAllUserTokens(staff.userId);
+    }
 
     return this.findFormatted(id);
   }
@@ -242,26 +261,18 @@ export class StaffService {
     transaction: Transaction,
   ): Promise<User | null> {
     const value = identifier.trim();
-    if (
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        value,
-      )
-    ) {
+    if (UUID_RE.test(value)) {
       return this.userModel.findByPk(value, { transaction });
     }
     if (value.includes('@')) {
-      return this.userModel.findOne({ where: { email: value }, transaction });
+      return this.userModel.findOne({
+        where: { email: value.toLowerCase() },
+        transaction,
+      });
     }
-    return this.userModel.findOne({
-      where: { phone: this.identifierToPhone(value)! },
-      transaction,
-    });
-  }
-
-  private identifierToPhone(identifier: string): string | null {
-    const value = identifier.trim();
-    if (value.includes('@')) return null;
-    // ponytail: asume Paraguay (+595) como el resto del auth; ajustar si hay multi-país.
-    return value.startsWith('+') ? value : `+595${value}`;
+    // Normaliza igual que el registro; si no es un teléfono válido, no hay match.
+    const dbPhone = toDbPhone(value);
+    if (!dbPhone) return null;
+    return this.userModel.findOne({ where: { phone: dbPhone }, transaction });
   }
 }
