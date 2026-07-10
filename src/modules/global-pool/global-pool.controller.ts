@@ -1,34 +1,42 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { GlobalPoolService } from './global-pool.service';
-import { CreateGlobalPoolDto } from './dto/create-global-pool.dto';
 import { UpdateGlobalPoolDto } from './dto/update-global-pool.dto';
+import { AdjustPoolDto } from './dto/adjust-pool.dto';
+import { CurrentUser, Public, Roles } from '../auth/decorators';
+import { UserRole } from '../users/entities/user.entity';
 
 @Controller('global-pool')
 export class GlobalPoolController {
   constructor(private readonly globalPoolService: GlobalPoolService) {}
 
-  @Post()
-  create(@Body() createGlobalPoolDto: CreateGlobalPoolDto) {
-    return this.globalPoolService.create(createGlobalPoolDto);
-  }
-
+  /** Instancia del pozo (hero + KPIs). Público: los jugadores ven el pozo. */
   @Get()
-  findAll() {
-    return this.globalPoolService.findAll();
+  @Public()
+  getPool() {
+    return this.globalPoolService.getPool();
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.globalPoolService.findOne(+id);
+  /** Igual que GET / pero con detalle completo del ganador. Solo admin. */
+  @Get('admin')
+  @Roles(UserRole.ADMIN)
+  getPoolAdmin() {
+    return this.globalPoolService.getPoolAdmin();
   }
 
+  /** Ajuste manual del pozo. POST /global-pool/adjust */
+  @Post('adjust')
+  @Roles(UserRole.ADMIN)
+  adjust(@Body() dto: AdjustPoolDto, @CurrentUser('id') adminId: string) {
+    return this.globalPoolService.adjust(dto, adminId);
+  }
+
+  /** Guardar config (costo por tirada, mínimo). PATCH /global-pool/:id */
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateGlobalPoolDto: UpdateGlobalPoolDto) {
-    return this.globalPoolService.update(+id, updateGlobalPoolDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.globalPoolService.remove(+id);
+  @Roles(UserRole.ADMIN)
+  updateConfig(
+    @Param('id') _id: string,
+    @Body() dto: UpdateGlobalPoolDto,
+  ) {
+    return this.globalPoolService.updateConfig(dto);
   }
 }

@@ -1,34 +1,30 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { PoolMovementsService } from './pool-movements.service';
-import { CreatePoolMovementDto } from './dto/create-pool-movement.dto';
-import { UpdatePoolMovementDto } from './dto/update-pool-movement.dto';
+import type { MovementCategory } from './pool-movements.service';
+import { Roles } from '../auth/decorators';
+import { UserRole } from '../users/entities/user.entity';
 
 @Controller('pool-movements')
 export class PoolMovementsController {
   constructor(private readonly poolMovementsService: PoolMovementsService) {}
 
-  @Post()
-  create(@Body() createPoolMovementDto: CreatePoolMovementDto) {
-    return this.poolMovementsService.create(createPoolMovementDto);
-  }
-
+  /**
+   * Historial paginado del pozo.
+   * GET /pool-movements?limit=&offset=&category=&search=
+   */
   @Get()
-  findAll() {
-    return this.poolMovementsService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.poolMovementsService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updatePoolMovementDto: UpdatePoolMovementDto) {
-    return this.poolMovementsService.update(+id, updatePoolMovementDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.poolMovementsService.remove(+id);
+  @Roles(UserRole.ADMIN)
+  findAll(
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Query('category') category?: MovementCategory,
+    @Query('search') search?: string,
+  ) {
+    return this.poolMovementsService.findAll({
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+      category,
+      search: search || undefined,
+    });
   }
 }
