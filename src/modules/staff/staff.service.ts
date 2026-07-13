@@ -20,6 +20,9 @@ import { RefreshToken } from '../auth/entities/refresh-token.entity';
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
 // Includes reutilizados para devolver la forma que espera la tabla del panel.
 const STAFF_INCLUDES = [
   { model: Bar, attributes: ['id', 'name'] },
@@ -105,16 +108,25 @@ export class StaffService {
   // ==================== ADMIN: LISTADO / ALTA / EDICIÓN ====================
 
   /**
-   * Listar todo el staff (para la tabla del panel). Filtro opcional por bar.
-   * GET /staff?barId=
+   * Listar el staff (tabla del panel), paginado. Filtro opcional por bar.
+   * GET /staff?barId=&limit=&offset= → { data, total }
    */
-  async findAll(barId?: string) {
-    const staff = await this.staffModel.findAll({
-      where: barId ? { barId } : {},
+  async findAll(query: { barId?: string; limit?: number; offset?: number }) {
+    const limit =
+      query.limit && query.limit > 0
+        ? Math.min(query.limit, MAX_LIMIT)
+        : DEFAULT_LIMIT;
+    const offset = query.offset && query.offset > 0 ? query.offset : 0;
+
+    const { rows, count } = await this.staffModel.findAndCountAll({
+      where: query.barId ? { barId: query.barId } : {},
       include: STAFF_INCLUDES,
       order: [['createdAt', 'DESC']],
+      limit,
+      offset,
     });
-    return staff.map((s) => this.format(s));
+
+    return { data: rows.map((s) => this.format(s)), total: count };
   }
 
   /**

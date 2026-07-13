@@ -34,13 +34,21 @@ export class StaffController {
   }
 
   /**
-   * Listar todo el staff (tabla del panel). Filtro opcional por bar.
-   * GET /staff?barId=
+   * Listar el staff (tabla del panel), paginado. Filtro opcional por bar.
+   * GET /staff?barId=&limit=&offset= → { data, total }
    */
   @Get()
   @Roles(UserRole.ADMIN)
-  findAll(@Query('barId') barId?: string) {
-    return this.staffService.findAll(barId);
+  findAll(
+    @Query('barId') barId?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.staffService.findAll({
+      barId: barId || undefined,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
   }
 
   /**
