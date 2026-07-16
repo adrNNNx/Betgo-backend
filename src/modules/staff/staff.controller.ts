@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { StaffService } from './staff.service';
+import { StaffRole, StaffStatus } from './entities/staff.entity';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { CurrentUser, Roles } from '../auth/decorators';
@@ -37,15 +38,28 @@ export class StaffController {
    * Listar el staff (tabla del panel), paginado. Filtro opcional por bar.
    * GET /staff?barId=&limit=&offset= → { data, total }
    */
+  /** Totales para los KPIs del panel (la tabla está paginada). GET /staff/summary */
+  @Get('summary')
+  @Roles(UserRole.ADMIN)
+  summary() {
+    return this.staffService.summary();
+  }
+
   @Get()
   @Roles(UserRole.ADMIN)
   findAll(
+    @Query('search') search?: string,
     @Query('barId') barId?: string,
+    @Query('role') role?: StaffRole,
+    @Query('status') status?: StaffStatus,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
     return this.staffService.findAll({
+      search: search || undefined,
       barId: barId || undefined,
+      role: role || undefined,
+      status: status || undefined,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });

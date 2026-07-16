@@ -8,8 +8,9 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Sequelize } from 'sequelize-typescript';
+import { Op } from 'sequelize';
 import type { Transaction } from 'sequelize';
-import { Staff, StaffStatus } from './entities/staff.entity';
+import { Staff, StaffRole, StaffStatus } from './entities/staff.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import { CreateStaffDto } from './dto/create-staff.dto';
@@ -108,25 +109,108 @@ export class StaffService {
   // ==================== ADMIN: LISTADO / ALTA / EDICIÓN ====================
 
   /**
-   * Listar el staff (tabla del panel), paginado. Filtro opcional por bar.
-   * GET /staff?barId=&limit=&offset= → { data, total }
+   * Listar el staff (tabla del panel), paginado y filtrado.
+   * GET /staff?search=&barId=&role=&status=&limit=&offset= → { data, total }
+   *
+   * Los filtros se resuelven en la base para que la paginación sea correcta a
+   * cualquier escala (buscar encuentra en todo el staff, no solo en la página).
    */
-  async findAll(query: { barId?: string; limit?: number; offset?: number }) {
+  async findAll(query: {
+    search?: string;
+    barId?: string;
+    role?: StaffRole;
+    status?: StaffStatus;
+    limit?: number;
+    offset?: number;
+  }) {
     const limit =
       query.limit && query.limit > 0
         ? Math.min(query.limit, MAX_LIMIT)
         : DEFAULT_LIMIT;
     const offset = query.offset && query.offset > 0 ? query.offset : 0;
 
+    const where: Record<string, unknown> = {};
+    if (query.barId) where.barId = query.barId;
+    if (query.status) where.status = query.status;
+    if (query.role) {
+      // El panel muestra `super_admin` como "Admin. de bar"; al filtrar por ese
+      // rol incluimos ambos para que la lista coincida con lo que se ve.
+      where.role =
+        query.role === StaffRole.ADMIN_BAR
+          ? { [Op.in]: [StaffRole.ADMIN_BAR, StaffRole.SUPER_ADMIN] }
+          : query.role;
+    }
+
+    // La búsqueda va contra el usuario vinculado (nombre / email / teléfono),
+    // que es lo que la tabla muestra como "miembro" e "identificador".
+    const like = query.search ? { [Op.iLike]: `%${query.search}%` } : null;
+    const userWhere = like
+      ? { [Op.or]: [{ name: like }, { email: like }, { phone: like }] }
+      : undefined;
+
     const { rows, count } = await this.staffModel.findAndCountAll({
-      where: query.barId ? { barId: query.barId } : {},
-      include: STAFF_INCLUDES,
+      where,
+      include: [
+        { model: Bar, attributes: ['id', 'name'] },
+        {
+          model: User,
+          attributes: ['id', 'name', 'phone', 'email'],
+          where: userWhere,
+          required: Boolean(userWhere),
+        },
+      ],
       order: [['createdAt', 'DESC']],
       limit,
       offset,
+      distinct: true,
     });
 
     return { data: rows.map((s) => this.format(s)), total: count };
+  }
+
+  /**
+   * Totales del staff para los KPIs del panel. Se agregan en la base porque la
+   * tabla está paginada y no se puede contar desde una página.
+   * GET /staff/summary
+   */
+  async summary(): Promise<{
+    total: number;
+    active: number;
+    inactive: number;
+    suspended: number;
+    mozos: number;
+    managers: number;
+  }> {
+    const rows = (await this.staffModel.findAll({
+      attributes: [
+        'status',
+        'role',
+        [this.sequelize.fn('COUNT', this.sequelize.col('id')), 'count'],
+      ],
+      group: ['status', 'role'],
+      raw: true,
+    })) as unknown as Array<{ status: StaffStatus; role: StaffRole; count: string }>;
+
+    const acc = {
+      total: 0,
+      active: 0,
+      inactive: 0,
+      suspended: 0,
+      mozos: 0,
+      managers: 0,
+    };
+
+    for (const r of rows) {
+      const n = Number(r.count) || 0;
+      acc.total += n;
+      if (r.status === StaffStatus.ACTIVE) acc.active += n;
+      else if (r.status === StaffStatus.INACTIVE) acc.inactive += n;
+      else if (r.status === StaffStatus.SUSPENDED) acc.suspended += n;
+      if (r.role === StaffRole.MOZO) acc.mozos += n;
+      else acc.managers += n;
+    }
+
+    return acc;
   }
 
   /**
