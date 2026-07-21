@@ -36,6 +36,7 @@ interface StaffCreationAttributes {
   barId?: string | null;
   isActive?: boolean;
   status?: StaffStatus;
+  balance?: number;
 }
 
 @Table({
@@ -90,6 +91,19 @@ export class Staff extends Model<Staff, StaffCreationAttributes> {
     defaultValue: StaffStatus.ACTIVE,
   })
   declare status: StaffStatus;
+
+  // Saldo/float del mozo: el admin se lo transfiere desde el bar y el mozo
+  // carga a usuarios desde acá. Nunca puede superar lo que tiene el bar.
+  @Column({
+    type: DataType.DECIMAL(12, 2),
+    allowNull: false,
+    defaultValue: 0,
+    get() {
+      const value = this.getDataValue('balance');
+      return value ? parseFloat(value as unknown as string) : 0;
+    },
+  })
+  declare balance: number;
 
   @CreatedAt
   @Column({ field: 'created_at' })

@@ -22,6 +22,10 @@ export enum TransactionType {
   BAR_RECHARGE = 'bar_recharge',
   PLATFORM_REVENUE = 'platform_revenue',
   ADJUSTMENT = 'adjustment',
+  /** Asignación de saldo del bar a un mozo. */
+  STAFF_ALLOCATION = 'staff_allocation',
+  /** Devolución de saldo del mozo al bar. */
+  STAFF_RETURN = 'staff_return',
 }
 
 // ISO 4217. Hoy solo guaraní; agregar valores aquí no requiere migración

@@ -13,6 +13,7 @@ import { StaffService } from './staff.service';
 import { StaffRole, StaffStatus } from './entities/staff.entity';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
+import { StaffBalanceDto } from './dto/staff-balance.dto';
 import { CurrentUser, Roles } from '../auth/decorators';
 import { User, UserRole } from '../users/entities/user.entity';
 
@@ -86,5 +87,31 @@ export class StaffController {
     @Body() dto: UpdateStaffDto,
   ) {
     return this.staffService.update(id, dto);
+  }
+
+  /**
+   * Asignar saldo del bar al mozo (transferencia, tope = saldo del bar).
+   * POST /staff/:id/recharge
+   */
+  @Post(':id/recharge')
+  @Roles(UserRole.ADMIN)
+  rechargeBalance(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: StaffBalanceDto,
+  ) {
+    return this.staffService.rechargeBalance(id, dto.amount, dto.notes);
+  }
+
+  /**
+   * Devolver saldo del mozo al bar (tope = saldo del mozo).
+   * POST /staff/:id/return
+   */
+  @Post(':id/return')
+  @Roles(UserRole.ADMIN)
+  returnBalance(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: StaffBalanceDto,
+  ) {
+    return this.staffService.returnBalance(id, dto.amount, dto.notes);
   }
 }

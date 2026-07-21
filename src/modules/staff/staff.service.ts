@@ -13,6 +13,10 @@ import type { Transaction } from 'sequelize';
 import { Staff, StaffRole, StaffStatus } from './entities/staff.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { User, UserRole } from '../users/entities/user.entity';
+import {
+  Transaction as TxRecord,
+  TransactionType,
+} from '../transactions/entities/transaction.entity';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { toDbPhone } from '../../common/utils/phone.util';
@@ -26,7 +30,7 @@ const MAX_LIMIT = 200;
 
 // Includes reutilizados para devolver la forma que espera la tabla del panel.
 const STAFF_INCLUDES = [
-  { model: Bar, attributes: ['id', 'name'] },
+  { model: Bar, attributes: ['id', 'name', 'balance'] },
   { model: User, attributes: ['id', 'name', 'phone', 'email'] },
 ];
 
@@ -37,6 +41,10 @@ export class StaffService {
     private readonly staffModel: typeof Staff,
     @InjectModel(User)
     private readonly userModel: typeof User,
+    @InjectModel(Bar)
+    private readonly barModel: typeof Bar,
+    @InjectModel(TxRecord)
+    private readonly transactionModel: typeof TxRecord,
     private readonly sequelize: Sequelize,
   ) {}
 
@@ -151,7 +159,7 @@ export class StaffService {
     const { rows, count } = await this.staffModel.findAndCountAll({
       where,
       include: [
-        { model: Bar, attributes: ['id', 'name'] },
+        { model: Bar, attributes: ['id', 'name', 'balance'] },
         {
           model: User,
           attributes: ['id', 'name', 'phone', 'email'],
@@ -211,6 +219,97 @@ export class StaffService {
     }
 
     return acc;
+  }
+
+  // ==================== ADMIN: SALDO DEL MOZO ====================
+
+  /**
+   * Asigna saldo del bar al mozo (transferencia). Atómico con lock: baja
+   * bar.balance y sube staff.balance. No puede superar el saldo del bar.
+   * POST /staff/:id/recharge
+   */
+  async rechargeBalance(id: string, amount: number, notes?: string) {
+    return this.moveBalance(id, amount, 'allocate', notes);
+  }
+
+  /**
+   * Devuelve saldo del mozo al bar. No puede superar el saldo del mozo.
+   * POST /staff/:id/return
+   */
+  async returnBalance(id: string, amount: number, notes?: string) {
+    return this.moveBalance(id, amount, 'return', notes);
+  }
+
+  private async moveBalance(
+    id: string,
+    amount: number,
+    direction: 'allocate' | 'return',
+    notes?: string,
+  ) {
+    if (!(amount > 0)) {
+      throw new BadRequestException('El monto debe ser mayor a 0.');
+    }
+
+    await this.sequelize.transaction(async (t) => {
+      const staff = await this.staffModel.findByPk(id, {
+        transaction: t,
+        lock: true,
+      });
+      if (!staff) throw new NotFoundException('Staff no encontrado.');
+      if (!staff.barId) {
+        throw new BadRequestException('El mozo no tiene un bar asignado.');
+      }
+      const bar = await this.barModel.findByPk(staff.barId, {
+        transaction: t,
+        lock: true,
+      });
+      if (!bar) throw new BadRequestException('Bar no encontrado.');
+
+      const staffBefore = Number(staff.balance);
+
+      if (direction === 'allocate') {
+        const barBalance = Number(bar.balance);
+        if (amount > barBalance) {
+          throw new BadRequestException(
+            `El bar solo tiene Gs. ${barBalance.toLocaleString('es-PY')} disponibles para asignar.`,
+          );
+        }
+        await bar.decrement('balance', { by: amount, transaction: t });
+        await staff.increment('balance', { by: amount, transaction: t });
+      } else {
+        if (amount > staffBefore) {
+          throw new BadRequestException(
+            `El mozo solo tiene Gs. ${staffBefore.toLocaleString('es-PY')} para devolver.`,
+          );
+        }
+        await staff.decrement('balance', { by: amount, transaction: t });
+        await bar.increment('balance', { by: amount, transaction: t });
+      }
+      await staff.reload({ transaction: t });
+
+      // Ledger: el movimiento se registra sobre el saldo del mozo.
+      await this.transactionModel.create(
+        {
+          barId: staff.barId,
+          staffId: staff.id,
+          type:
+            direction === 'allocate'
+              ? TransactionType.STAFF_ALLOCATION
+              : TransactionType.STAFF_RETURN,
+          amount,
+          balanceBefore: staffBefore,
+          balanceAfter: Number(staff.balance),
+          notes:
+            notes ??
+            (direction === 'allocate'
+              ? 'Asignación de saldo al mozo'
+              : 'Devolución de saldo al bar'),
+        },
+        { transaction: t },
+      );
+    });
+
+    return this.findFormatted(id);
   }
 
   /**
@@ -339,8 +438,11 @@ export class StaffService {
       role: s.role,
       isActive: s.isActive,
       status: s.status,
+      balance: Number(s.balance),
       barId: s.barId,
-      bar: s.bar ? { id: s.bar.id, name: s.bar.name } : null,
+      bar: s.bar
+        ? { id: s.bar.id, name: s.bar.name, balance: Number(s.bar.balance) }
+        : null,
       user: s.user
         ? {
             id: s.user.id,

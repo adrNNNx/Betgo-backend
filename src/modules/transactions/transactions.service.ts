@@ -17,6 +17,7 @@ export type TransactionCategory =
   | 'recharge'
   | 'prize'
   | 'platform'
+  | 'allocation'
   | 'adjustment';
 
 const CATEGORY_TYPES: Record<string, TransactionType[]> = {
@@ -28,6 +29,10 @@ const CATEGORY_TYPES: Record<string, TransactionType[]> = {
   recharge: [TransactionType.RECHARGE, TransactionType.BAR_RECHARGE],
   prize: [TransactionType.PRIZE_LOCAL, TransactionType.PRIZE_JACKPOT],
   platform: [TransactionType.PLATFORM_REVENUE],
+  allocation: [
+    TransactionType.STAFF_ALLOCATION,
+    TransactionType.STAFF_RETURN,
+  ],
   adjustment: [TransactionType.ADJUSTMENT],
 };
 

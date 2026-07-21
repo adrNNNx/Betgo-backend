@@ -6,9 +6,10 @@ import { StaffController } from './staff.controller';
 import { Staff } from './entities/staff.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { User } from '../users/entities/user.entity';
+import { Transaction } from '../transactions/entities/transaction.entity';
 
 @Module({
-  imports: [SequelizeModule.forFeature([Staff, Bar, User])],
+  imports: [SequelizeModule.forFeature([Staff, Bar, User, Transaction])],
   controllers: [StaffController],
   providers: [StaffService],
   exports: [StaffService],

@@ -345,9 +345,26 @@ export class RechargeCodesService {
         throw new BadRequestException('Usuario no encontrado o inactivo.');
       }
 
+      // Lock del mozo: el saldo que carga sale de su float asignado por el
+      // admin. No puede cargar más de lo que tiene.
+      const staffLocked = await this.staffModel.findByPk(staff.id, {
+        transaction,
+        lock: true,
+      });
+      if (!staffLocked) {
+        throw new ForbiddenException('Tu cuenta de staff no está disponible.');
+      }
+      const staffBalance = Number(staffLocked.balance);
+      if (amount > staffBalance) {
+        throw new BadRequestException(
+          `Saldo insuficiente. Tu saldo asignado es Gs. ${staffBalance.toLocaleString('es-PY')}.`,
+        );
+      }
+
       const balanceBefore = user.balance;
 
-      // 1) Acreditar saldo
+      // 1) Descontar del saldo del mozo y acreditar al usuario
+      await staffLocked.decrement('balance', { by: amount, transaction });
       await user.increment('balance', { by: amount, transaction });
       await user.reload({ transaction });
 
