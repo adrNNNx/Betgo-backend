@@ -24,7 +24,7 @@ export class CreateSymbolDto {
 
   /**
    * ID del bar al que pertenece.
-   * - null/undefined → símbolo GLOBAL → isJackpot se fuerza a true
+   * - null/undefined → símbolo GLOBAL (puede entregar el pozo si isJackpot)
    * - uuid → símbolo LOCAL del bar → isJackpot se fuerza a false
    */
   @IsOptional()
@@ -40,6 +40,18 @@ export class CreateSymbolDto {
   @Min(1)
   @Max(1000)
   weight?: number;
+
+  /** Desde cuántos iguales paga. 3-4 = premio menor, 5 = sólo con los cinco. */
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(5)
+  minMatchToWin?: number;
+
+  /** Si entrega el pozo global con 5 iguales. Se ignora en símbolos de bar. */
+  @IsOptional()
+  @IsBoolean()
+  isJackpot?: boolean;
 
   @IsOptional()
   @IsInt()

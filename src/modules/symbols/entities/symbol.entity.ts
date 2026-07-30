@@ -21,6 +21,7 @@ interface SymbolCreationAttributes {
   prizeId?: string | null;
 
   weight?: number;
+  minMatchToWin?: number;
   isJackpot?: boolean;
   displayOrder?: number;
   isActive?: boolean;
@@ -84,6 +85,23 @@ export class Symbol extends Model<Symbol, SymbolCreationAttributes> {
   })
   declare prizeId: string | null;
 
+  /**
+   * Desde cuántos carriles iguales este símbolo paga su premio.
+   * 3 o 4 = premio menor (físico, lo entrega el bar); 5 = sólo con los cinco.
+   */
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: false,
+    defaultValue: 5,
+    field: 'min_match_to_win',
+  })
+  declare minMatchToWin: number;
+
+  /**
+   * Si este símbolo entrega el POZO GLOBAL al alinear los 5 carriles.
+   * Lo elige el admin (sólo para símbolos globales); los de bar van en false
+   * porque el pozo es plata compartida entre todos los bares.
+   */
   @Column({
     type: DataType.BOOLEAN,
     allowNull: false,

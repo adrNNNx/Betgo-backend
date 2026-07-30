@@ -26,6 +26,11 @@ export interface PlayResult {
   symbols: string[];
   matchCount: number;
   isWinner: boolean;
+  /**
+   * Umbral vigente al momento de jugar. Se guarda para que el historial siga
+   * siendo explicable si el admin cambia la configuración después.
+   */
+  minMatch?: number;
 }
 
 interface PlayCreationAttributes {

@@ -10,7 +10,11 @@ import { Sequelize } from 'sequelize-typescript';
 
 // Servicios inyectados
 import { BarsService } from '../bars/bars.service';
-import { PlaysService } from '../plays/plays.service';
+import {
+  PlaysService,
+  REELS,
+  type GeneratedResult,
+} from '../plays/plays.service';
 import {
   UserDailyPlaysService,
 } from '../user-daily-plays/user-daily-plays.service';
@@ -30,6 +34,8 @@ import {
 // Tipos
 import { PlayType } from '../plays/entities/play.entity';
 import { Bar } from '../bars/entities/bar.entity';
+import { Prize } from '../prizes/entities/prize.entity';
+import { PrizeClaim } from '../prize-claims/entities/prize-claim.entity';
 
 // ==================== INTERFACES DE RESPUESTA ====================
 
@@ -165,9 +171,9 @@ export class GameAccessService {
     const symbols = await this.playsService.getBarSymbols(bar.id);
     const result = this.playsService.generatePlayResult(symbols);
 
-    const prize = result.isWinner
-      ? await this.playsService.getPrizeForSymbol(result.winningSymbol)
-      : null;
+    // Gana si el símbolo que salió paga con esa cantidad de repeticiones.
+    const prize = await this.playsService.getPrizeForResult(result);
+    const isWinner = !!prize;
 
     const play = await this.playsService.createPlay({
       userId: user.id,
@@ -177,9 +183,10 @@ export class GameAccessService {
       result: {
         symbols: result.symbolIds,
         matchCount: result.matchCount,
-        isWinner: result.isWinner,
+        isWinner,
+        minMatch: result.topSymbol?.minMatchToWin ?? REELS,
       },
-      isWinner: result.isWinner,
+      isWinner,
       prizeId: prize?.id,
     });
 
@@ -198,14 +205,14 @@ export class GameAccessService {
 
     this.logger.log(
       `Jugada GRATIS - Bar: ${bar.slug}, User: ${user.phone}, ` +
-        `Ganó: ${result.isWinner}, Restantes: ${dailyPlay.getRemainingPlays()}`,
+        `Ganó: ${isWinner}, Restantes: ${dailyPlay.getRemainingPlays()}`,
     );
 
     return {
       playId: play.id,
       symbols: result.symbolIds,
       symbolDetails: result.symbolDetails,
-      isWinner: result.isWinner,
+      isWinner,
       prize: prize
         ? {
             id: prize.id,
@@ -262,9 +269,9 @@ export class GameAccessService {
     const symbols = await this.playsService.getBarSymbols(bar.id);
     const result = this.playsService.generatePlayResult(symbols);
 
-    const prize = result.isWinner
-      ? await this.playsService.getPrizeForSymbol(result.winningSymbol)
-      : null;
+    // Gana si el símbolo que salió paga con esa cantidad de repeticiones.
+    const prize = await this.playsService.getPrizeForResult(result);
+    const isWinner = !!prize;
 
     // === Transacción atómica ===
     const txResult = await this.sequelize.transaction(async (transaction) => {
@@ -296,9 +303,10 @@ export class GameAccessService {
           result: {
             symbols: result.symbolIds,
             matchCount: result.matchCount,
-            isWinner: result.isWinner,
+            isWinner,
+            minMatch: result.topSymbol?.minMatchToWin ?? REELS,
           },
-          isWinner: result.isWinner,
+          isWinner,
           prizeId: prize?.id,
           amountPaid: playCost,
           poolContribution,
@@ -376,14 +384,14 @@ export class GameAccessService {
 
     this.logger.log(
       `Jugada PAGA - Bar: ${bar.slug}, User: ${user.phone}, ` +
-        `Costo: ${playCost}, Ganó: ${result.isWinner}`,
+        `Costo: ${playCost}, Ganó: ${isWinner}`,
     );
 
     return {
       playId: txResult.play.id,
       symbols: result.symbolIds,
       symbolDetails: result.symbolDetails,
-      isWinner: result.isWinner,
+      isWinner,
       prize: prize
         ? {
             id: prize.id,
@@ -439,12 +447,16 @@ export class GameAccessService {
 
     // === Generar resultado (puro) ===
     const symbols = await this.playsService.getGlobalSymbols();
-    const result = this.playsService.generatePlayResult(symbols);
+    const result = this.playsService.generatePlayResult(symbols, REELS);
 
-    // En jugadas de pozo, cualquier 5-match gana el jackpot.
-    // Los símbolos globales tienen isJackpot=true (se fuerza al crear),
-    // pero esta lógica es defensiva por si hay datos legacy.
-    const isJackpotWinner = result.isWinner;
+    // El jackpot exige los 5 carriles de un símbolo marcado como jackpot.
+    const isJackpotWinner = this.isJackpotWin(result);
+
+    // Premio menor: el símbolo que salió paga desde su propio umbral. No vacía
+    // el pozo (es un premio físico) y la jugada igual contribuye.
+    const minorPrize = isJackpotWinner
+      ? null
+      : await this.playsService.getPrizeForResult(result);
 
     // === Transacción atómica ===
     const txResult = await this.sequelize.transaction(async (transaction) => {
@@ -476,9 +488,11 @@ export class GameAccessService {
           result: {
             symbols: result.symbolIds,
             matchCount: result.matchCount,
-            isWinner: result.isWinner,
+            isWinner: isJackpotWinner || !!minorPrize,
+            minMatch: result.topSymbol?.minMatchToWin ?? REELS,
           },
-          isWinner: isJackpotWinner,
+          isWinner: isJackpotWinner || !!minorPrize,
+          prizeId: minorPrize?.id,
           amountPaid: playCost,
           poolContribution,
         },
@@ -500,6 +514,18 @@ export class GameAccessService {
 
       // 4) Revenue al bar
       await bar.increment('balance', { by: barRevenue, transaction });
+
+      // 5) Premio menor: se reclama en el bar, igual que en free/paid.
+      let minorClaim: PrizeClaim | undefined;
+      if (minorPrize) {
+        minorClaim = await this.playsService.createPrizeClaim(
+          play.id,
+          user.id,
+          bar.id,
+          minorPrize.id,
+          transaction,
+        );
+      }
 
       let jackpotAmount: number | undefined;
 
@@ -582,6 +608,7 @@ export class GameAccessService {
       return {
         play,
         jackpotAmount,
+        minorClaim,
         poolAfter: isJackpotWinner
           ? Number(pool.minAmount)
           : Number(pool.currentAmount),
@@ -599,22 +626,38 @@ export class GameAccessService {
 
     this.logger.log(
       `Jugada POOL - Bar: ${bar.slug}, User: ${user.phone}, ` +
-        `Costo: ${playCost}, Ganó: ${isJackpotWinner}`,
+        `Costo: ${playCost}, Ganó: ${isJackpotWinner}` +
+        (minorPrize ? `, Premio ${result.matchCount} iguales: ${minorPrize.name}` : ''),
     );
+
+    let prizeResponse: PlayResultResponse['prize'] = null;
+    if (isJackpotWinner) {
+      prizeResponse = {
+        id: 'jackpot',
+        name: `¡JACKPOT! Gs. ${txResult.jackpotAmount?.toLocaleString()}`,
+        type: 'jackpot',
+        value: txResult.jackpotAmount,
+      };
+    } else if (minorPrize && txResult.minorClaim) {
+      prizeResponse = {
+        id: minorPrize.id,
+        name: minorPrize.name,
+        type: minorPrize.type,
+        value: minorPrize.value ?? undefined,
+        imageUrl: minorPrize.imageUrl ?? undefined,
+        claimCode: txResult.minorClaim.claimCode,
+        claimQrCode: await this.playsService.generateClaimQrCode(
+          txResult.minorClaim.claimCode,
+        ),
+      };
+    }
 
     return {
       playId: txResult.play.id,
       symbols: result.symbolIds,
       symbolDetails: result.symbolDetails,
-      isWinner: isJackpotWinner,
-      prize: isJackpotWinner
-        ? {
-            id: 'jackpot',
-            name: `¡JACKPOT! Gs. ${txResult.jackpotAmount?.toLocaleString()}`,
-            type: 'jackpot',
-            value: txResult.jackpotAmount,
-          }
-        : null,
+      isWinner: isJackpotWinner || !!minorPrize,
+      prize: prizeResponse,
       session: {
         playsRemaining: dailyStatus.playsRemaining,
         playsUsed: dailyStatus.playsUsed,
@@ -677,6 +720,15 @@ export class GameAccessService {
       throw new BadRequestException('Pozo global no configurado');
     }
     return pool;
+  }
+
+  /**
+   * Si este giro se llevó el POZO GLOBAL: los 5 carriles con un símbolo que el
+   * admin marcó como jackpot. Nunca es configurable a menos de 5, porque el
+   * pozo es plata compartida entre todos los bares.
+   */
+  private isJackpotWin(result: GeneratedResult): boolean {
+    return result.matchCount >= REELS && !!result.topSymbol?.isJackpot;
   }
 
   private validatePlayCost(cost: number): void {

@@ -1,6 +1,7 @@
 import { IsNumber, IsOptional, IsPositive, Min } from 'class-validator';
 
 // Config editable del pozo desde el panel (costo por tirada, mínimo).
+// El umbral de premio vive en cada símbolo (symbols.min_match_to_win), no acá.
 export class UpdateGlobalPoolDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El costo debe ser numérico' })

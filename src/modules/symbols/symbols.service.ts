@@ -16,6 +16,13 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 const SYMBOLS_FOLDER_DEFAULT = 'betgo/symbols';
 
+/**
+ * El pozo global siempre exige los 5 carriles: no es configurable porque es
+ * plata compartida entre todos los bares. Coincide con REELS de plays.service
+ * (no se importa de ahí para no acoplar symbols con el motor de juego).
+ */
+const JACKPOT_MATCH = 5;
+
 @Injectable()
 export class SymbolsService {
   private readonly logger = new Logger(SymbolsService.name);
@@ -33,13 +40,46 @@ export class SymbolsService {
   ) {}
 
   /**
+   * Reglas del símbolo que entrega el POZO GLOBAL. Se valida el estado FINAL
+   * (lo que queda después del cambio), no lo que vino en el DTO: así no hay
+   * forma de dejar el símbolo en un estado imposible mandando los campos por
+   * separado en dos PATCH.
+   *
+   * INVARIANTE:
+   *  - Sólo un símbolo global puede entregar el pozo: es plata compartida
+   *    entre todos los bares, ninguno puede repartirla por su cuenta.
+   *  - El que entrega el pozo NO tiene premio propio. El pozo sale de
+   *    `global_pool.currentAmount`, no de la tabla `prizes`; si además tuviera
+   *    un premio asignado, en las jugadas de bar emitiría un comprobante por
+   *    un premio que en realidad nadie va a entregar.
+   *  - Siempre exige los 5 carriles. Sin premio propio, el umbral no significa
+   *    nada, así que se fuerza en vez de rechazarse.
+   */
+  private resolveJackpot(next: {
+    isGlobal: boolean;
+    isJackpot: boolean;
+    prizeId: string | null;
+    minMatchToWin: number;
+  }): { isJackpot: boolean; minMatchToWin: number } {
+    if (!next.isGlobal || !next.isJackpot) {
+      return { isJackpot: false, minMatchToWin: next.minMatchToWin };
+    }
+    if (next.prizeId) {
+      throw new BadRequestException(
+        'Un símbolo que entrega el pozo global no puede tener un premio propio. ' +
+          'Quitale el premio primero, o desmarcá el pozo para asignarle uno.',
+      );
+    }
+    return { isJackpot: true, minMatchToWin: JACKPOT_MATCH };
+  }
+
+  /**
    * Crear un símbolo.
    *
    * REGLA DE NEGOCIO:
-   *  - barId = null → símbolo GLOBAL → isJackpot = true (automático)
-   *  - barId = uuid → símbolo LOCAL del bar → isJackpot = false (automático)
-   *
-   * El usuario NO controla isJackpot; se deriva del barId.
+   *  - barId = null → símbolo GLOBAL: el admin decide si entrega el pozo
+   *    (isJackpot), y arranca en false para no regalarlo por descuido.
+   *  - barId = uuid → símbolo LOCAL: isJackpot se fuerza a false.
    */
   async create(dto: CreateSymbolDto): Promise<Symbol> {
     // Validar que el bar existe si se proporcionó
@@ -63,20 +103,30 @@ export class SymbolsService {
     }
 
     const isGlobal = !dto.barId;
+    const prizeId = dto.prizeId ?? null;
+
+    const jackpot = this.resolveJackpot({
+      isGlobal,
+      isJackpot: dto.isJackpot ?? false,
+      prizeId,
+      minMatchToWin: dto.minMatchToWin ?? JACKPOT_MATCH,
+    });
 
     const symbol = await this.symbolModel.create({
       name: dto.name,
       imageUrl: dto.imageUrl,
       barId: dto.barId ?? null,
-      prizeId: dto.prizeId ?? null,
+      prizeId,
       weight: dto.weight ?? 100,
-      isJackpot: isGlobal,
+      minMatchToWin: jackpot.minMatchToWin,
+      isJackpot: jackpot.isJackpot,
       displayOrder: dto.displayOrder ?? 0,
       isActive: dto.isActive ?? true,
     });
 
     this.logger.log(
-      `Símbolo creado: "${symbol.name}" (${isGlobal ? 'GLOBAL/Jackpot' : `Bar: ${dto.barId}`}), peso: ${symbol.weight}`,
+      `Símbolo creado: "${symbol.name}" (${isGlobal ? 'GLOBAL' : `Bar: ${dto.barId}`}), ` +
+        `peso: ${symbol.weight}, paga desde: ${symbol.minMatchToWin}${symbol.isJackpot ? ', entrega el pozo' : ''}`,
     );
 
     return symbol;
@@ -84,7 +134,8 @@ export class SymbolsService {
 
   /**
    * Actualizar un símbolo.
-   * Si barId cambia, isJackpot se recalcula automáticamente.
+   * Al pasar a ser de un bar pierde el jackpot: el pozo sólo lo entregan los
+   * símbolos globales.
    */
   async update(id: string, dto: UpdateSymbolDto): Promise<Symbol> {
     const symbol = await this.findOne(id);
@@ -107,12 +158,22 @@ export class SymbolsService {
       }
     }
 
-    // Si barId se modifica, recalcular isJackpot
-    const updateData: any = { ...dto };
-    if ('barId' in dto) {
-      const willBeGlobal = !dto.barId;
-      updateData.isJackpot = willBeGlobal;
-    }
+    const updateData: Record<string, unknown> = { ...dto };
+
+    // Estado FINAL: lo que manda el DTO pisando lo que ya tenía el símbolo.
+    const sent = <K extends keyof UpdateSymbolDto>(key: K) =>
+      key in dto && dto[key] !== undefined;
+
+    const jackpot = this.resolveJackpot({
+      isGlobal: sent('barId') ? !dto.barId : symbol.barId === null,
+      isJackpot: sent('isJackpot') ? !!dto.isJackpot : symbol.isJackpot,
+      prizeId: sent('prizeId') ? (dto.prizeId ?? null) : symbol.prizeId,
+      minMatchToWin: sent('minMatchToWin')
+        ? Number(dto.minMatchToWin)
+        : symbol.minMatchToWin,
+    });
+    updateData.isJackpot = jackpot.isJackpot;
+    updateData.minMatchToWin = jackpot.minMatchToWin;
 
     await symbol.update(updateData);
 

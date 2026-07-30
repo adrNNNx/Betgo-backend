@@ -18,12 +18,20 @@ import {
 
 // ==================== INTERFACES ====================
 
+export const REELS = 5;
+export const MIN_MATCH = 3;
+
+/**
+ * Resultado crudo de un giro: qué salió y qué se repitió más.
+ * No decide si ganó: eso lo define el símbolo (ver `getPrizeForResult`).
+ */
 export interface GeneratedResult {
   symbolIds: string[];
   symbolDetails: Array<{ id: string; name: string; imageUrl: string }>;
-  isWinner: boolean;
+  /** Veces que se repitió el símbolo más frecuente (1-5). */
   matchCount: number;
-  winningSymbol: Symbol | null;
+  /** El símbolo más repetido. Con matchCount >= 3 es siempre único. */
+  topSymbol: Symbol | null;
 }
 
 export interface CreatePlayParams {
@@ -128,43 +136,30 @@ export class PlaysService {
    *  - Usa crypto.randomInt() → entropía real del OS, no Math.random()
    *  - Cada carril se resuelve de forma independiente con selección ponderada
    *  - Símbolo con weight=200 aparece ~2x más que uno con weight=100
-   *  - Gana SOLO si los 5 carriles muestran el mismo símbolo
    *
-   * PROBABILIDADES (ejemplo con N símbolos de peso uniforme):
-   *  - N=8:  P(jackpot) = 8 × (1/8)^5 = 1/4,096   ≈ 0.024%
-   *  - N=10: P(jackpot) = 10 × (1/10)^5 = 1/10,000  ≈ 0.01%
-   *  - N=6:  P(jackpot) = 6 × (1/6)^5 = 1/1,296   ≈ 0.077%
+   * Sólo gira y cuenta: si eso paga algo lo decide el símbolo que salió
+   * (ver `getPrizeForResult`), porque cada uno define desde cuántos iguales
+   * entrega su premio.
    *
-   * Con pesos desiguales, los símbolos más pesados tienen más chance
-   * de repetirse. Un símbolo con 40% de probabilidad individual
-   * tiene P(5 iguales) = 0.4^5 ≈ 1.02% — todavía difícil pero no imposible.
-   *
-   * FORCE_WIN=true en .env → siempre retorna victoria (solo testing).
+   * FORCE_WIN=true en .env → fuerza exactamente `forceMatch` coincidencias,
+   * para poder probar cada nivel (solo testing).
    */
-  generatePlayResult(symbols: Symbol[]): GeneratedResult {
-    // === Testing mode ===
+  generatePlayResult(symbols: Symbol[], forceMatch = REELS): GeneratedResult {
+    let resultSymbols: Symbol[];
+
     if (process.env.FORCE_WIN === 'true') {
-      const winSymbol = symbols[0];
-      const arr = Array(5).fill(winSymbol) as Symbol[];
-      return {
-        symbolIds: arr.map((s) => s.id),
-        symbolDetails: arr.map((s) => ({
-          id: s.id,
-          name: s.name,
-          imageUrl: s.imageUrl,
-        })),
-        isWinner: true,
-        matchCount: 5,
-        winningSymbol: winSymbol,
-      };
-    }
-
-    // === Generar 5 símbolos aleatorios ===
-    const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
-    const resultSymbols: Symbol[] = [];
-
-    for (let i = 0; i < 5; i++) {
-      resultSymbols.push(this.selectWeightedSymbol(symbols, totalWeight));
+      const target = Math.min(REELS, Math.max(MIN_MATCH, forceMatch));
+      // Rellena con otro símbolo para no pasarse del umbral pedido.
+      const filler = symbols[1] ?? symbols[0];
+      resultSymbols = [
+        ...(Array(target).fill(symbols[0]) as Symbol[]),
+        ...(Array(REELS - target).fill(filler) as Symbol[]),
+      ];
+    } else {
+      const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
+      resultSymbols = Array.from({ length: REELS }, () =>
+        this.selectWeightedSymbol(symbols, totalWeight),
+      );
     }
 
     // === Contar coincidencias ===
@@ -179,16 +174,13 @@ export class PlaysService {
     }
 
     let maxCount = 0;
-    let winningSymbol: Symbol | null = null;
+    let topSymbol: Symbol | null = null;
     for (const [, value] of counts) {
       if (value.count > maxCount) {
         maxCount = value.count;
-        winningSymbol = value.symbol;
+        topSymbol = value.symbol;
       }
     }
-
-    // Victoria = 5 iguales
-    const isWinner = maxCount === 5;
 
     return {
       symbolIds: resultSymbols.map((s) => s.id),
@@ -197,9 +189,8 @@ export class PlaysService {
         name: s.name,
         imageUrl: s.imageUrl,
       })),
-      isWinner,
       matchCount: maxCount,
-      winningSymbol: isWinner ? winningSymbol : null,
+      topSymbol,
     };
   }
 
@@ -229,19 +220,23 @@ export class PlaysService {
   // ==================== PREMIOS ====================
 
   /**
-   * Obtener premio asociado a un símbolo ganador.
+   * Premio que paga un giro, según el símbolo que salió.
+   *
+   * Manda el símbolo: paga su premio si se repitió al menos tantas veces como
+   * pide su `minMatchToWin`. Así la cereza puede pagar desde 3 y el diamante
+   * exigir 4, cada uno con su premio y su frecuencia.
+   *
+   * Devuelve null si no se repitió lo suficiente, si el símbolo no tiene
+   * premio, o si el premio quedó inactivo (no rompe la jugada: simplemente
+   * no se gana, que es lo correcto para el jugador).
    */
-  async getPrizeForSymbol(symbol: Symbol | null): Promise<Prize | null> {
-    if (!symbol || !symbol.prizeId) {
-      return null;
-    }
+  async getPrizeForResult(result: GeneratedResult): Promise<Prize | null> {
+    const symbol = result.topSymbol;
+    if (!symbol?.prizeId) return null;
+    if (result.matchCount < symbol.minMatchToWin) return null;
+
     const prize = await this.prizeModel.findByPk(symbol.prizeId);
-    if (prize && !prize.isActive) {
-      throw new BadRequestException(
-        `El premio "${prize.name}" no está disponible actualmente.`,
-      );
-    }
-    return prize;
+    return prize?.isActive ? prize : null;
   }
 
   /**
