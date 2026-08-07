@@ -4,6 +4,7 @@ import {
   Post,
   Get,
   Body,
+  Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { PrizeClaimsService } from './prize-claims.service';
 import { CurrentUser, Roles } from '../auth/decorators';
 import { User, UserRole } from '../users/entities/user.entity';
 import { ValidateClaimDto, DeliverPrizeDto } from './dto/prize-claim.dto';
+import { ClaimStatus } from './entities/prize-claim.entity';
 
 @Controller('prize-claims')
 export class PrizeClaimsController {
@@ -67,5 +69,47 @@ export class PrizeClaimsController {
   @Roles(UserRole.STAFF, UserRole.ADMIN)
   async getPendingClaims(@CurrentUser() user: User) {
     return this.prizeClaimsService.getPendingByBar(user.id);
+  }
+
+  /**
+   * Premios MAYORES (type=jackpot) pendientes, de todos los bares.
+   * GET /prize-claims/major?barId=&status=&limit=&offset=  →  { data, total }
+   *
+   * Solo ADMIN. Son los premios grandes del catálogo que el mozo no puede
+   * entregar. El pozo global no aparece acá: se acredita al saldo y no genera claim.
+   */
+  @Get('major')
+  @Roles(UserRole.ADMIN)
+  async getMajorClaims(
+    @Query('barId') barId?: string,
+    @Query('status') status?: ClaimStatus,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.prizeClaimsService.getMajorClaims({
+      barId: barId || undefined,
+      status,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+  }
+
+  /**
+   * Entregar un premio mayor. POST /prize-claims/major/deliver
+   * Solo ADMIN. Requiere que el admin tenga perfil de staff activo,
+   * porque delivered_by_id apunta a staff.
+   */
+  @Post('major/deliver')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ADMIN)
+  async deliverMajorPrize(
+    @Body() dto: DeliverPrizeDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.prizeClaimsService.deliverMajorPrize(
+      dto.code,
+      user.id,
+      dto.notes,
+    );
   }
 }

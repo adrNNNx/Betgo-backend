@@ -14,6 +14,9 @@ import { User } from '../users/entities/user.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { StaffService } from '../staff/staff.service';
 
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
 // ==================== INTERFACES ====================
 
 export interface ValidateClaimResponse {
@@ -68,6 +71,8 @@ export interface PendingClaimItem {
     name: string | null;
     phone: string;
   };
+  /** Solo lo devuelve la vista de admin: el mozo ya sabe de qué bar es. */
+  bar?: { id: string; name: string } | null;
   createdAt: Date;
   expiresAt: Date;
 }
@@ -153,7 +158,7 @@ export class PrizeClaimsService {
     // Verificar que sea premio local (no jackpot)
     if (claim.prize.type === PrizeType.JACKPOT) {
       throw new BadRequestException(
-        'Este es un premio del pozo global. El jugador debe contactar a soporte para reclamarlo.',
+        'Este es un premio mayor: lo entrega un administrador, no el panel del mozo.',
       );
     }
 
@@ -351,6 +356,154 @@ export class PrizeClaimsService {
       createdAt: claim.createdAt,
       expiresAt: claim.expiresAt,
     }));
+  }
+
+  // ============ PREMIOS MAYORES (type=jackpot) — SOLO ADMIN ============
+
+  /**
+   * Premios mayores pendientes de entregar, de TODOS los bares.
+   * Son los `type: jackpot` del catálogo (iPhone, auto, montos grandes): el mozo
+   * no puede entregarlos, los autoriza un admin. No confundir con el pozo global,
+   * que se acredita al saldo automáticamente y no genera claim.
+   * Auto-expira los vencidos, igual que la vista del mozo.
+   */
+  async getMajorClaims(query: {
+    barId?: string;
+    status?: ClaimStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ data: PendingClaimItem[]; total: number }> {
+    const status = query.status ?? ClaimStatus.PENDING;
+
+    // Solo tiene sentido auto-expirar cuando se listan los pendientes.
+    if (status === ClaimStatus.PENDING) {
+      await this.prizeClaimModel.update(
+        { status: ClaimStatus.EXPIRED },
+        {
+          where: {
+            ...(query.barId ? { barId: query.barId } : {}),
+            status: ClaimStatus.PENDING,
+            expiresAt: { [Op.lt]: new Date() },
+          },
+        },
+      );
+    }
+
+    const limit =
+      query.limit && query.limit > 0
+        ? Math.min(query.limit, MAX_LIMIT)
+        : DEFAULT_LIMIT;
+    const offset = query.offset && query.offset > 0 ? query.offset : 0;
+
+    const { rows, count } = await this.prizeClaimModel.findAndCountAll({
+      where: {
+        status,
+        ...(query.barId ? { barId: query.barId } : {}),
+      },
+      include: [
+        {
+          model: Prize,
+          attributes: ['name', 'type', 'value', 'imageUrl'],
+          where: { type: PrizeType.JACKPOT }, // solo premios mayores
+        },
+        { model: User, attributes: ['name', 'phone'] },
+        { model: Bar, attributes: ['id', 'name'] },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+      distinct: true,
+    });
+
+    return {
+      data: rows.map((claim) => ({
+        id: claim.id,
+        claimCode: claim.claimCode,
+        prize: {
+          name: claim.prize.name,
+          type: claim.prize.type,
+          value: claim.prize.value,
+          imageUrl: claim.prize.imageUrl,
+        },
+        user: {
+          name: claim.user.name,
+          phone: claim.user.phone,
+        },
+        bar: claim.bar ? { id: claim.bar.id, name: claim.bar.name } : null,
+        createdAt: claim.createdAt,
+        expiresAt: claim.expiresAt,
+      })),
+      total: count,
+    };
+  }
+
+  /**
+   * Entrega de un premio mayor, autorizada por un admin.
+   * Mismas validaciones que la entrega del mozo, pero sin restricción de bar
+   * (el admin ve todos) y aceptando únicamente premios `type: jackpot`.
+   *
+   * `delivered_by_id` es FK a staff, así que el admin necesita perfil de staff
+   * activo. Si no lo tiene, findActiveByUserId corta con 403.
+   */
+  async deliverMajorPrize(
+    code: string,
+    adminUserId: string,
+    notes?: string,
+  ): Promise<DeliverPrizeResponse> {
+    const staff = await this.getStaffByUserId(adminUserId);
+
+    const claim = await this.prizeClaimModel.findOne({
+      where: { claimCode: code },
+      include: [
+        { model: Prize },
+        { model: User, attributes: ['id', 'name', 'phone'] },
+      ],
+    });
+
+    if (!claim) {
+      throw new NotFoundException('Código de premio no encontrado.');
+    }
+    if (claim.status === ClaimStatus.DELIVERED) {
+      throw new BadRequestException('Este premio ya fue entregado.');
+    }
+    if (new Date() > claim.expiresAt) {
+      if (claim.status !== ClaimStatus.EXPIRED) {
+        await claim.update({ status: ClaimStatus.EXPIRED });
+      }
+      throw new BadRequestException('Este código de premio ha expirado.');
+    }
+    if (claim.status !== ClaimStatus.PENDING) {
+      throw new BadRequestException(`Código en estado inválido: ${claim.status}`);
+    }
+    if (claim.prize.type !== PrizeType.JACKPOT) {
+      throw new BadRequestException(
+        'Este es un premio local: se entrega desde el panel del mozo.',
+      );
+    }
+
+    await claim.update({
+      status: ClaimStatus.DELIVERED,
+      deliveredById: staff.id,
+      deliveredAt: new Date(),
+      notes: notes || null,
+    });
+
+    if (claim.prize.stock !== null && claim.prize.stock > 0) {
+      await claim.prize.decrement('stock', { by: 1 });
+    }
+
+    this.logger.log(
+      `🏆 Premio MAYOR entregado - Código: ${code}, Premio: ${claim.prize.name}, ` +
+        `Usuario: ${claim.user.phone}, Autorizó: ${staff.id}`,
+    );
+
+    return {
+      success: true,
+      claimCode: claim.claimCode,
+      prize: { name: claim.prize.name, value: claim.prize.value },
+      user: { name: claim.user.name, phone: claim.user.phone },
+      deliveredAt: claim.deliveredAt!,
+    };
   }
 
   // ==================== PRIVADOS ====================

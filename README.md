@@ -19,21 +19,28 @@ premios, staff y transacciones.
 
 ## 🗂️ Estructura del proyecto
 
-Este repo es **una pieza** de un conjunto de repos hermanos. PostgreSQL **no vive acá**,
-vive en `infra/`:
+Todo lo necesario para levantar el backend está en **este** repo:
 
 ```
-Betgo/
-├── infra/                 ← PostgreSQL + script de schema inicial
+betgo-backend/
+├── infra/                 ← PostgreSQL (docker-compose)
 │   ├── docker-compose.yml
-│   └── init-db/
-├── betgo-backend/         ← estás acá (API NestJS)
-├── betgo-admin/           ← panel de administración (Next.js)
-├── betgo-mozos/           ← panel de mozos
-└── betgo-usuarios/        ← app de jugadores
+│   └── .env.example
+├── init-db/               ← schema inicial (14 tablas, ENUMs, pgcrypto)
+│   └── 01_schema.sql
+├── src/database/migrations/   ← cambios de schema posteriores
+├── docker-compose.yml     ← el backend en Docker (opcional)
+└── src/
 ```
 
-> ⚠️ El `docker-compose.yml` de **este** repo solo construye el backend. Espera que la red
+`infra/docker-compose.yml` monta `../init-db`, así que **el schema inicial y las
+migraciones viven juntos** en este repo — son la misma responsabilidad y tener copias
+separadas las hace divergir.
+
+Los repos hermanos (`betgo-admin`, `betgo-mozos`, `betgo-usuarios`) son los frontends y
+no tocan la base directamente.
+
+> ⚠️ El `docker-compose.yml` de la **raíz** solo construye el backend. Espera que la red
 > `betgo_network` y el contenedor `betgo_postgres` ya existan (los crea `infra/`).
 
 ---
@@ -42,7 +49,8 @@ Betgo/
 
 ### Paso 1 — Crear la red y el volumen de Docker
 
-Ambos están declarados como `external: true`, así que hay que crearlos **a mano la primera vez**:
+Ambos están declarados como `external: true`, así que hay que crearlos **a mano la primera vez**.
+Que el volumen sea externo es a propósito: un `docker-compose down` accidental no se lleva los datos.
 
 ```bash
 docker network create betgo_network
@@ -52,7 +60,8 @@ docker volume create betgo_postgres_data
 ### Paso 2 — Levantar PostgreSQL
 
 ```bash
-cd ../infra
+cd infra
+cp .env.example .env
 docker-compose up -d
 ```
 
@@ -63,13 +72,14 @@ docker ps --filter name=betgo_postgres
 docker-compose logs -f postgres
 ```
 
-> El script `infra/init-db/01_schema.sql` (tablas, tipos ENUM, extensión `pgcrypto`) se ejecuta
+> El script `init-db/01_schema.sql` (14 tablas, tipos ENUM, extensión `pgcrypto`) se ejecuta
 > **solo la primera vez** que se crea el contenedor, cuando el volumen está vacío.
+> Las credenciales del `.env` de `infra/` deben coincidir con las del `.env` del backend.
 
 ### Paso 3 — Configurar variables de entorno
 
 ```bash
-cd ../betgo-backend
+cd ..
 cp .env.example .env
 ```
 
@@ -248,7 +258,7 @@ El `DB_PASSWORD` de tu `.env` no coincide con el del contenedor. Si ya creaste e
 otra contraseña, la de Postgres no cambia sola: hay que recrear el volumen (⚠️ borra los datos):
 
 ```bash
-cd ../infra && docker-compose down
+cd infra && docker-compose down
 docker volume rm betgo_postgres_data && docker volume create betgo_postgres_data
 docker-compose up -d
 ```

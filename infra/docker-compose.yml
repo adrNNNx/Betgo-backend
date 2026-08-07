@@ -1,0 +1,47 @@
+# PostgreSQL de BetGo.
+#
+# Uso:
+#   Primera vez:  docker network create betgo_network
+#                 docker volume create betgo_postgres_data
+#                 cp .env.example .env
+#                 docker-compose up -d
+#   Ver logs:     docker-compose logs -f postgres
+#   Entrar a BD:  docker exec -it betgo_postgres psql -U betgo -d betgo_db
+#
+#   ADVERTENCIA: `down -v` borra los datos. El volumen es externo justamente
+#   para que un `down` accidental no se los lleve.
+#
+# El init monta ../init-db (el schema versionado del backend), no una copia
+# propia: el schema inicial y las migraciones son la misma responsabilidad y
+# tener dos copias las hace divergir. Solo corre con el volumen vacío.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: betgo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-betgo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-betgo_secret_2026}
+      POSTGRES_DB: ${DB_DATABASE:-betgo_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - betgo_postgres_data:/var/lib/postgresql/data
+      - ../init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-betgo} -d ${DB_DATABASE:-betgo_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - betgo_network
+
+networks:
+  betgo_network:
+    external: true
+
+volumes:
+  betgo_postgres_data:
+    external: true

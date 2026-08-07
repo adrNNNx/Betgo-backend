@@ -294,18 +294,23 @@ export class PlaysService {
       imageUrl: string;
       weight: number;
       hasPrize: boolean;
+      prizeName: string | null;
+      minMatchToWin: number;
       isGlobal: boolean;
       isJackpot: boolean;
     }>
   > {
     const symbols = await this.getBarSymbols(barId);
 
+    // getBarSymbols ya trae la relación Prize, así que prizeName no cuesta query extra.
     return symbols.map((s) => ({
       id: s.id,
       name: s.name,
       imageUrl: s.imageUrl,
       weight: s.weight,
       hasPrize: !!s.prizeId,
+      prizeName: s.prize?.name ?? null,
+      minMatchToWin: s.minMatchToWin,
       isGlobal: s.barId === null,
       isJackpot: s.isJackpot,
     }));
@@ -322,6 +327,8 @@ export class PlaysService {
       imageUrl: string;
       weight: number;
       hasPrize: boolean;
+      prizeName: string | null;
+      minMatchToWin: number;
       isJackpot: boolean;
     }>
   > {
@@ -333,6 +340,8 @@ export class PlaysService {
       imageUrl: s.imageUrl,
       weight: s.weight,
       hasPrize: !!s.prizeId,
+      prizeName: s.prize?.name ?? null,
+      minMatchToWin: s.minMatchToWin,
       isJackpot: s.isJackpot,
     }));
   }
