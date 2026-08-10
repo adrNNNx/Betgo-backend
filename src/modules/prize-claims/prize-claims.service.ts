@@ -77,6 +77,30 @@ export interface PendingClaimItem {
   expiresAt: Date;
 }
 
+/** Item de "Mis Premios" (pantalla del jugador). */
+export interface MyPrizeClaim {
+  id: string;
+  claimCode: string;
+  status: ClaimStatus;
+  createdAt: Date;
+  expiresAt: Date;
+  deliveredAt: Date | null;
+  prize: {
+    id: string;
+    name: string;
+    description: string | null;
+    type: string;
+    value: number | null;
+    imageUrl: string | null;
+  };
+  bar: {
+    id: string;
+    name: string;
+    slug: string;
+    logoUrl: string | null;
+  } | null;
+}
+
 @Injectable()
 export class PrizeClaimsService {
   private readonly logger = new Logger(PrizeClaimsService.name);
@@ -503,6 +527,92 @@ export class PrizeClaimsService {
       prize: { name: claim.prize.name, value: claim.prize.value },
       user: { name: claim.user.name, phone: claim.user.phone },
       deliveredAt: claim.deliveredAt!,
+    };
+  }
+
+  // ============ PREMIOS DEL JUGADOR ("Mis Premios") ============
+
+  /**
+   * Premios del usuario autenticado, de todos los bares.
+   * Sin `status` devuelve todo (pendientes, entregados y vencidos).
+   *
+   * El userId sale del JWT, nunca de la query: si viniera por parámetro,
+   * cualquiera podría leer los premios de otro.
+   *
+   * Nota: el pozo global no aparece acá. Se acredita directo al saldo y no
+   * genera claim (ver game-access.service.ts).
+   */
+  async getMyClaims(
+    userId: string,
+    query: { status?: ClaimStatus; limit?: number; offset?: number },
+  ): Promise<{ data: MyPrizeClaim[]; total: number }> {
+    // Mismo auto-expirado que la vista del mozo, scopeado a este usuario, para
+    // que jugador y mozo vean el mismo estado del mismo premio.
+    await this.prizeClaimModel.update(
+      { status: ClaimStatus.EXPIRED },
+      {
+        where: {
+          userId,
+          status: ClaimStatus.PENDING,
+          expiresAt: { [Op.lt]: new Date() },
+        },
+      },
+    );
+
+    const limit =
+      query.limit && query.limit > 0
+        ? Math.min(query.limit, MAX_LIMIT)
+        : DEFAULT_LIMIT;
+    const offset = query.offset && query.offset > 0 ? query.offset : 0;
+
+    const { rows, count } = await this.prizeClaimModel.findAndCountAll({
+      where: {
+        userId,
+        ...(query.status ? { status: query.status } : {}),
+      },
+      include: [
+        {
+          model: Prize,
+          attributes: ['id', 'name', 'description', 'type', 'value', 'imageUrl'],
+        },
+        {
+          model: Bar,
+          attributes: ['id', 'name', 'slug', 'logoUrl'],
+          required: false, // barId es nullable → el front muestra "Premio global"
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+      distinct: true,
+    });
+
+    return {
+      data: rows.map((claim) => ({
+        id: claim.id,
+        claimCode: claim.claimCode,
+        status: claim.status,
+        createdAt: claim.createdAt,
+        expiresAt: claim.expiresAt,
+        deliveredAt: claim.deliveredAt,
+        prize: {
+          id: claim.prize.id,
+          name: claim.prize.name,
+          description: claim.prize.description,
+          type: claim.prize.type,
+          value: claim.prize.value,
+          imageUrl: claim.prize.imageUrl,
+        },
+        bar: claim.bar
+          ? {
+              id: claim.bar.id,
+              name: claim.bar.name,
+              slug: claim.bar.slug,
+              logoUrl: claim.bar.logoUrl,
+            }
+          : null,
+      })),
+      total: count,
     };
   }
 

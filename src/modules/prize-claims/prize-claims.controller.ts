@@ -72,6 +72,30 @@ export class PrizeClaimsController {
   }
 
   /**
+   * Premios del usuario autenticado, de todos los bares ("Mis Premios").
+   * GET /prize-claims/my?status=&limit=&offset=  →  { data, total }
+   *
+   * Sin @Roles a propósito: es el único handler de este controller para usuario
+   * común. Los guards globales (JwtAuthGuard + RolesGuard) hacen que eso
+   * signifique "requiere JWT válido, cualquier rol".
+   *
+   * El userId sale del token, nunca de la query.
+   */
+  @Get('my')
+  async getMyClaims(
+    @CurrentUser() user: User,
+    @Query('status') status?: ClaimStatus,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.prizeClaimsService.getMyClaims(user.id, {
+      status,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+  }
+
+  /**
    * Premios MAYORES (type=jackpot) pendientes, de todos los bares.
    * GET /prize-claims/major?barId=&status=&limit=&offset=  →  { data, total }
    *
