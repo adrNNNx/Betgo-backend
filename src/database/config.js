@@ -9,7 +9,9 @@ module.exports = {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT) || 5432,
     dialect: 'postgres',
-    logging: console.log,
+    // sequelize-cli ya informa qué migración corrió; el SQL crudo solo estorba.
+    // DB_LOGGING=true para verlo cuando una migración falla.
+    logging: process.env.DB_LOGGING === 'true' ? console.log : false,
   },
   test: {
     username: process.env.DB_USERNAME || 'betgo',

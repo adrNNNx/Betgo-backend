@@ -19,10 +19,10 @@ export const getDatabaseConfig = (
   autoLoadModels: true,
   synchronize: false,
 
+  // Apagado por defecto: el SQL crudo tapa los logs de la app.
+  // Para depurar una query, DB_LOGGING=true en el .env.
   logging:
-    configService.get<string>('NODE_ENV') === 'development'
-      ? console.log
-      : false,
+    configService.get<string>('DB_LOGGING') === 'true' ? console.log : false,
 
   pool: {
     max: 10,
