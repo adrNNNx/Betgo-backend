@@ -36,6 +36,11 @@ import { PlayType } from '../plays/entities/play.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { Prize } from '../prizes/entities/prize.entity';
 import { PrizeClaim } from '../prize-claims/entities/prize-claim.entity';
+import {
+  JackpotClaim,
+  JackpotClaimStatus,
+} from '../jackpot-claims/entities/jackpot-claim.entity';
+import { JackpotClaimsService } from '../jackpot-claims/jackpot-claims.service';
 
 // ==================== INTERFACES DE RESPUESTA ====================
 
@@ -73,6 +78,22 @@ export interface PlayResultResponse {
     claimCode?: string;
     claimQrCode?: string;
   } | null;
+  /** Repeticiones del símbolo más frecuente (1-5). */
+  matchCount?: number;
+  /** Símbolo que formó la combinación, o null si no hubo. */
+  winningSymbolId?: string | null;
+  /**
+   * Presente SOLO cuando se ganó el pozo (junto con prize.id === 'jackpot').
+   * El monto no se acredita al saldo: se retira coordinando con administración.
+   * `contactHref` es null si no hay ADMIN_WHATSAPP configurado.
+   */
+  jackpot?: {
+    folio: string;
+    status: JackpotClaimStatus;
+    amount: number;
+    playedAt: Date;
+    contactHref: string | null;
+  };
   session: {
     playsRemaining: number;
     playsUsed: number;
@@ -91,6 +112,7 @@ export class GameAccessService {
     private readonly barsService: BarsService,
     private readonly playsService: PlaysService,
     private readonly userDailyPlaysService: UserDailyPlaysService,
+    private readonly jackpotClaimsService: JackpotClaimsService,
 
     @InjectModel(User)
     private readonly userModel: typeof User,
@@ -528,6 +550,7 @@ export class GameAccessService {
       }
 
       let jackpotAmount: number | undefined;
+      let jackpotClaim: JackpotClaim | undefined;
 
       if (!isJackpotWinner) {
         // === NO GANÓ: contribuir al pozo ===
@@ -555,11 +578,9 @@ export class GameAccessService {
         );
       } else {
         // === GANÓ EL JACKPOT ===
+        // El pozo NO se acredita al saldo: se emite un comprobante con folio y
+        // el pago se coordina con administración.
         jackpotAmount = poolBefore;
-
-        // Transferir pozo al ganador
-        await user.increment('balance', { by: jackpotAmount, transaction });
-        await user.reload({ transaction });
 
         // Movimiento de vaciado del pozo
         await this.poolMovementModel.create(
@@ -575,39 +596,52 @@ export class GameAccessService {
           { transaction },
         );
 
-        // Resetear pozo al mínimo
+        // Resetear el pozo enseguida: si esperáramos al pago manual, otro
+        // jugador podría ganar el mismo dinero y quedarían dos deudas sobre él.
+        // `totalPaid` NO se toca acá: recién nace la deuda (ver markPaid()).
         await pool.update(
           {
             currentAmount: pool.minAmount,
             lastWinnerId: user.id,
             lastWinnerAmount: jackpotAmount,
             lastWinnerAt: new Date(),
-            totalPaid: Number(pool.totalPaid) + jackpotAmount,
           },
           { transaction },
         );
 
-        // Transacción de premio
+        // Comprobante con folio J-XXXXXX.
+        jackpotClaim = await this.jackpotClaimsService.createForWin(
+          {
+            userId: user.id,
+            playId: play.id,
+            amount: jackpotAmount,
+            barId: bar.id,
+          },
+          transaction,
+        );
+
+        // Ledger: la obligación con el ganador. No mueve su saldo.
         await this.transactionModel.create(
           {
             userId: user.id,
             barId: bar.id,
             type: TransactionType.PRIZE_JACKPOT,
             amount: jackpotAmount,
-            balanceBefore: user.balance - jackpotAmount,
-            balanceAfter: user.balance,
+            notes: `Pozo ganado — folio ${jackpotClaim.folio} (pago manual pendiente)`,
           },
           { transaction },
         );
 
         this.logger.log(
-          `🎉 JACKPOT - User: ${user.phone}, Monto: Gs. ${jackpotAmount.toLocaleString()}, Bar: ${bar.slug}`,
+          `🎉 JACKPOT - User: ${user.phone}, Monto: Gs. ${jackpotAmount.toLocaleString()}, ` +
+            `Bar: ${bar.slug}, Folio: ${jackpotClaim.folio}`,
         );
       }
 
       return {
         play,
         jackpotAmount,
+        jackpotClaim,
         minorClaim,
         poolAfter: isJackpotWinner
           ? Number(pool.minAmount)
@@ -658,6 +692,21 @@ export class GameAccessService {
       symbolDetails: result.symbolDetails,
       isWinner: isJackpotWinner || !!minorPrize,
       prize: prizeResponse,
+      // El motor ya los calcula; el front los derivaba contando symbols[].
+      matchCount: result.matchCount,
+      winningSymbolId: result.topSymbol?.id ?? null,
+      // Comprobante del pozo: el monto no está en el saldo, se coordina el retiro.
+      jackpot: txResult.jackpotClaim
+        ? {
+            folio: txResult.jackpotClaim.folio,
+            status: txResult.jackpotClaim.status,
+            amount: txResult.jackpotClaim.amount,
+            playedAt: txResult.jackpotClaim.createdAt,
+            contactHref: this.jackpotClaimsService.buildContactHref(
+              txResult.jackpotClaim.folio,
+            ),
+          }
+        : undefined,
       session: {
         playsRemaining: dailyStatus.playsRemaining,
         playsUsed: dailyStatus.playsUsed,

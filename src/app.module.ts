@@ -15,6 +15,7 @@ import { PlaysModule } from './modules/plays/plays.module';
 import { UserDailyPlaysModule } from './modules/user-daily-plays/user-daily-plays.module';
 import { RechargeCodesModule } from './modules/recharge-codes/recharge-codes.module';
 import { PrizeClaimsModule } from './modules/prize-claims/prize-claims.module';
+import { JackpotClaimsModule } from './modules/jackpot-claims/jackpot-claims.module';
 import { PoolMovementsModule } from './modules/pool-movements/pool-movements.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -41,6 +42,7 @@ import { BannersModule } from './modules/banners/banners.module';
     UserDailyPlaysModule,
     RechargeCodesModule,
     PrizeClaimsModule,
+    JackpotClaimsModule,
     PoolMovementsModule,
     AuditLogsModule,
     AuthModule,

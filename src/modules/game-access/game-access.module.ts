@@ -8,6 +8,7 @@ import { GameAccessController } from './game-access.controller';
 import { BarsModule } from '../bars/bars.module';
 import { PlaysModule } from '../plays/plays.module';
 import { UserDailyPlaysModule } from '../user-daily-plays/user-daily-plays.module';
+import { JackpotClaimsModule } from '../jackpot-claims/jackpot-claims.module';
 
 // Modelos que aún no tienen service propio
 import { User } from '../users/entities/user.entity';
@@ -21,6 +22,7 @@ import { Transaction } from '../transactions/entities/transaction.entity';
     BarsModule,
     PlaysModule,
     UserDailyPlaysModule,
+    JackpotClaimsModule,
 
     // Modelos directos (migrar a modules propios en el futuro)
     SequelizeModule.forFeature([User, GlobalPool, PoolMovement, Transaction]),
