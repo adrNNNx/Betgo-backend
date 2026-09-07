@@ -246,6 +246,9 @@ export class GameAccessService {
             claimQrCode,
           }
         : null,
+      // El motor ya los calcula: evita que el front los derive contando symbols[].
+      matchCount: result.matchCount,
+      winningSymbolId: result.topSymbol?.id ?? null,
       session: {
         playsRemaining: dailyPlay.getRemainingPlays(),
         playsUsed: dailyPlay.playsUsed,
@@ -425,6 +428,9 @@ export class GameAccessService {
             claimQrCode: txResult.claimQrCode,
           }
         : null,
+      // El motor ya los calcula: evita que el front los derive contando symbols[].
+      matchCount: result.matchCount,
+      winningSymbolId: result.topSymbol?.id ?? null,
       session: {
         playsRemaining: dailyStatus.playsRemaining,
         playsUsed: dailyStatus.playsUsed,

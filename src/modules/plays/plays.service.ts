@@ -294,7 +294,9 @@ export class PlaysService {
       imageUrl: string;
       weight: number;
       hasPrize: boolean;
+      prizeId: string | null;
       prizeName: string | null;
+      prizeValue: number | null;
       minMatchToWin: number;
       isGlobal: boolean;
       isJackpot: boolean;
@@ -302,14 +304,16 @@ export class PlaysService {
   > {
     const symbols = await this.getBarSymbols(barId);
 
-    // getBarSymbols ya trae la relación Prize, así que prizeName no cuesta query extra.
+    // getBarSymbols ya trae la relación Prize: los datos del premio no cuestan query extra.
     return symbols.map((s) => ({
       id: s.id,
       name: s.name,
       imageUrl: s.imageUrl,
       weight: s.weight,
       hasPrize: !!s.prizeId,
+      prizeId: s.prizeId,
       prizeName: s.prize?.name ?? null,
+      prizeValue: s.prize?.value ?? null,
       minMatchToWin: s.minMatchToWin,
       isGlobal: s.barId === null,
       isJackpot: s.isJackpot,
@@ -327,7 +331,9 @@ export class PlaysService {
       imageUrl: string;
       weight: number;
       hasPrize: boolean;
+      prizeId: string | null;
       prizeName: string | null;
+      prizeValue: number | null;
       minMatchToWin: number;
       isJackpot: boolean;
     }>
@@ -340,7 +346,9 @@ export class PlaysService {
       imageUrl: s.imageUrl,
       weight: s.weight,
       hasPrize: !!s.prizeId,
+      prizeId: s.prizeId,
       prizeName: s.prize?.name ?? null,
+      prizeValue: s.prize?.value ?? null,
       minMatchToWin: s.minMatchToWin,
       isJackpot: s.isJackpot,
     }));
