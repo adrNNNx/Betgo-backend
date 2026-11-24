@@ -7,9 +7,14 @@ import { Play } from './entities/play.entity';
 import { Symbol } from '../symbols/entities/symbol.entity';
 import { Prize } from '../prizes/entities/prize.entity';
 import { PrizeClaim } from '../prize-claims/entities/prize-claim.entity';
+import { PrizesModule } from '../prizes/prizes.module';
 
 @Module({
-  imports: [SequelizeModule.forFeature([Play, Symbol, Prize, PrizeClaim])],
+  imports: [
+    SequelizeModule.forFeature([Play, Symbol, Prize, PrizeClaim]),
+    // Decidir si un giro paga depende del stock disponible del premio.
+    PrizesModule,
+  ],
   controllers: [PlaysController],
   providers: [PlaysService],
   exports: [PlaysService],

@@ -8,12 +8,18 @@ const sym = (
   { weight = 100, minMatchToWin = 5, prizeId = null as string | null } = {},
 ) => ({ id, name: id, imageUrl: `${id}.png`, weight, minMatchToWin, prizeId }) as Symbol;
 
-// El premio sale por findByPk; el resto de los modelos no se toca.
+// Transacción de mentira: estos tests miran umbrales, no concurrencia. El stock
+// y el lock tienen su propio spec (prizes/prize-inventory.service.spec.ts).
+const tx = { id: 'tx' } as never;
+
+// El inventario otorga el premio si está activo; el resto de los modelos no se toca.
 const serviceWith = (prize: Partial<Prize> | null) =>
   new PlaysService(
     null as never,
     null as never,
-    { findByPk: () => Promise.resolve(prize) } as never,
+    {
+      lockForAward: () => Promise.resolve(prize?.isActive ? prize : null),
+    } as never,
     null as never,
   );
 
@@ -86,23 +92,23 @@ describe('getPrizeForResult — manda el símbolo', () => {
   it('paga desde su propio umbral, no antes', async () => {
     const cereza = sym('cereza', { minMatchToWin: 3, prizeId: 'p1' });
     const svc = serviceWith(activo);
-    await expect(svc.getPrizeForResult(resultado(cereza, 2))).resolves.toBeNull();
-    await expect(svc.getPrizeForResult(resultado(cereza, 3))).resolves.toBe(activo);
-    await expect(svc.getPrizeForResult(resultado(cereza, 5))).resolves.toBe(activo);
+    await expect(svc.getPrizeForResult(resultado(cereza, 2), tx)).resolves.toBeNull();
+    await expect(svc.getPrizeForResult(resultado(cereza, 3), tx)).resolves.toBe(activo);
+    await expect(svc.getPrizeForResult(resultado(cereza, 5), tx)).resolves.toBe(activo);
   });
 
   it('cada símbolo tiene su propio umbral', async () => {
     const diamante = sym('diamante', { minMatchToWin: 4, prizeId: 'p1' });
     const svc = serviceWith(activo);
     // Con 3 la cereza ya pagaría, el diamante todavía no.
-    await expect(svc.getPrizeForResult(resultado(diamante, 3))).resolves.toBeNull();
-    await expect(svc.getPrizeForResult(resultado(diamante, 4))).resolves.toBe(activo);
+    await expect(svc.getPrizeForResult(resultado(diamante, 3), tx)).resolves.toBeNull();
+    await expect(svc.getPrizeForResult(resultado(diamante, 4), tx)).resolves.toBe(activo);
   });
 
   it('sin premio asignado no paga aunque salgan los 5', async () => {
     const pelado = sym('pelado', { minMatchToWin: 3 });
     await expect(
-      serviceWith(activo).getPrizeForResult(resultado(pelado, 5)),
+      serviceWith(activo).getPrizeForResult(resultado(pelado, 5), tx),
     ).resolves.toBeNull();
   });
 
@@ -110,14 +116,50 @@ describe('getPrizeForResult — manda el símbolo', () => {
     const cereza = sym('cereza', { minMatchToWin: 3, prizeId: 'p1' });
     const inactivo = { id: 'p1', name: 'Cerveza', isActive: false } as Prize;
     await expect(
-      serviceWith(inactivo).getPrizeForResult(resultado(cereza, 5)),
+      serviceWith(inactivo).getPrizeForResult(resultado(cereza, 5), tx),
     ).resolves.toBeNull();
   });
 
   it('el default 5 mantiene la conducta histórica', async () => {
     const clasico = sym('clasico', { prizeId: 'p1' });
     const svc = serviceWith(activo);
-    await expect(svc.getPrizeForResult(resultado(clasico, 4))).resolves.toBeNull();
-    await expect(svc.getPrizeForResult(resultado(clasico, 5))).resolves.toBe(activo);
+    await expect(svc.getPrizeForResult(resultado(clasico, 4), tx)).resolves.toBeNull();
+    await expect(svc.getPrizeForResult(resultado(clasico, 5), tx)).resolves.toBe(activo);
+  });
+});
+
+describe('getPrizeForResult — delega el stock en el inventario', () => {
+  const cereza = sym('cereza', { minMatchToWin: 3, prizeId: 'p1' });
+  const giro = (matchCount: number) => ({
+    symbolIds: [],
+    symbolDetails: [],
+    matchCount,
+    topSymbol: cereza,
+  });
+  const conInventario = (lockForAward: jest.Mock) =>
+    new PlaysService(
+      null as never,
+      null as never,
+      { lockForAward } as never,
+      null as never,
+    );
+
+  it('pide el premio al inventario dentro de la transacción de la jugada', async () => {
+    const lockForAward = jest.fn().mockResolvedValue(null);
+    await conInventario(lockForAward).getPrizeForResult(giro(3), tx);
+    expect(lockForAward).toHaveBeenCalledWith('p1', tx);
+  });
+
+  it('un giro perdedor no toca el inventario: no bloquea ningún premio', async () => {
+    const lockForAward = jest.fn().mockResolvedValue(null);
+    await conInventario(lockForAward).getPrizeForResult(giro(2), tx);
+    expect(lockForAward).not.toHaveBeenCalled();
+  });
+
+  it('si el inventario dice que no hay stock, el giro no paga', async () => {
+    const lockForAward = jest.fn().mockResolvedValue(null);
+    await expect(
+      conInventario(lockForAward).getPrizeForResult(giro(5), tx),
+    ).resolves.toBeNull();
   });
 });

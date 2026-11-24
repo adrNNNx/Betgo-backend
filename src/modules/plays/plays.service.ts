@@ -11,6 +11,7 @@ import * as QRCode from 'qrcode';
 import { Play, PlayType, PlayResult } from './entities/play.entity';
 import { Symbol } from '../symbols/entities/symbol.entity';
 import { Prize } from '../prizes/entities/prize.entity';
+import { PrizeInventoryService } from '../prizes/prize-inventory.service';
 import {
   PrizeClaim,
   ClaimStatus,
@@ -55,8 +56,7 @@ export class PlaysService {
     private readonly playModel: typeof Play,
     @InjectModel(Symbol)
     private readonly symbolModel: typeof Symbol,
-    @InjectModel(Prize)
-    private readonly prizeModel: typeof Prize,
+    private readonly prizeInventory: PrizeInventoryService,
     @InjectModel(PrizeClaim)
     private readonly prizeClaimModel: typeof PrizeClaim,
   ) {}
@@ -227,16 +227,25 @@ export class PlaysService {
    * exigir 4, cada uno con su premio y su frecuencia.
    *
    * Devuelve null si no se repitió lo suficiente, si el símbolo no tiene
-   * premio, o si el premio quedó inactivo (no rompe la jugada: simplemente
-   * no se gana, que es lo correcto para el jugador).
+   * premio, si el premio quedó inactivo o si ya no le queda stock disponible
+   * (no rompe la jugada: simplemente no se gana, que es lo correcto).
+   *
+   * La transacción es obligatoria: el premio queda bloqueado hasta que la
+   * jugada crea su comprobante en esa misma transacción. Resolverlo afuera
+   * reabriría la carrera por la última unidad.
+   *
+   * Un giro sin combinación ganadora no toca el inventario: las jugadas
+   * perdedoras no bloquean ningún premio.
    */
-  async getPrizeForResult(result: GeneratedResult): Promise<Prize | null> {
+  async getPrizeForResult(
+    result: GeneratedResult,
+    transaction: SequelizeTransaction,
+  ): Promise<Prize | null> {
     const symbol = result.topSymbol;
     if (!symbol?.prizeId) return null;
     if (result.matchCount < symbol.minMatchToWin) return null;
 
-    const prize = await this.prizeModel.findByPk(symbol.prizeId);
-    return prize?.isActive ? prize : null;
+    return this.prizeInventory.lockForAward(symbol.prizeId, transaction);
   }
 
   /**

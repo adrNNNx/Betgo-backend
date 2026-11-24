@@ -8,8 +8,10 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Op } from 'sequelize';
+import { Sequelize } from 'sequelize-typescript';
 import { PrizeClaim, ClaimStatus } from './entities/prize-claim.entity';
 import { Prize, PrizeType } from '../prizes/entities/prize.entity';
+import { PrizeInventoryService } from '../prizes/prize-inventory.service';
 import { User } from '../users/entities/user.entity';
 import { Bar } from '../bars/entities/bar.entity';
 import { StaffService } from '../staff/staff.service';
@@ -111,6 +113,8 @@ export class PrizeClaimsService {
     @InjectModel(Prize)
     private readonly prizeModel: typeof Prize,
     private readonly staffService: StaffService,
+    private readonly sequelize: Sequelize,
+    private readonly prizeInventory: PrizeInventoryService,
   ) {}
 
   // ==================== VALIDAR CÓDIGO DE PREMIO (MOZO) ====================
@@ -281,18 +285,8 @@ export class PrizeClaimsService {
       );
     }
 
-    // Marcar como entregado
-    await claim.update({
-      status: ClaimStatus.DELIVERED,
-      deliveredById: staff.id,
-      deliveredAt: new Date(),
-      notes: notes || null,
-    });
-
-    // Decrementar stock del premio si tiene stock limitado
-    if (claim.prize.stock !== null && claim.prize.stock > 0) {
-      await claim.prize.decrement('stock', { by: 1 });
-    }
+    // Entregado + descuento de la unidad física, atómico e idempotente.
+    const deliveredAt = await this.markDelivered(claim, staff.id, notes);
 
     this.logger.log(
       `🎁 Premio entregado - Código: ${code}, Premio: ${claim.prize.name}, ` +
@@ -310,8 +304,65 @@ export class PrizeClaimsService {
         name: claim.user.name,
         phone: claim.user.phone,
       },
-      deliveredAt: claim.deliveredAt!,
+      deliveredAt,
     };
+  }
+
+  /**
+   * PENDING → DELIVERED y descuento de la unidad física, en una transacción.
+   *
+   * La transición es condicional en la base: sólo cambia la fila si sigue
+   * pendiente y vigente. Si dos mozos confirman el mismo código a la vez, uno
+   * solo cambia la fila y uno solo descuenta stock; el otro recibe el error.
+   * Repetir una entrega nunca descuenta stock dos veces.
+   *
+   * El segundo intento responde error y no 200 a propósito: dos escaneos del
+   * mismo comprobante son una señal que el mozo tiene que ver.
+   */
+  private async markDelivered(
+    claim: PrizeClaim,
+    staffId: string,
+    notes?: string,
+  ): Promise<Date> {
+    const deliveredAt = new Date();
+
+    await this.sequelize.transaction(async (transaction) => {
+      const [changed] = await this.prizeClaimModel.update(
+        {
+          status: ClaimStatus.DELIVERED,
+          deliveredById: staffId,
+          deliveredAt,
+          notes: notes || null,
+        },
+        {
+          where: {
+            id: claim.id,
+            status: ClaimStatus.PENDING,
+            expiresAt: { [Op.gt]: deliveredAt },
+          },
+          transaction,
+        },
+      );
+
+      if (changed === 0) {
+        // Otro request ganó la carrera o venció justo ahora: se informa el
+        // estado real en vez de suponerlo.
+        await claim.reload({ transaction });
+        if (claim.status === ClaimStatus.DELIVERED) {
+          throw new BadRequestException('Este premio ya fue entregado.');
+        }
+        if (deliveredAt >= claim.expiresAt) {
+          throw new BadRequestException('Este código de premio ha expirado.');
+        }
+        throw new BadRequestException(
+          `No se puede entregar. Estado actual: ${claim.status}`,
+        );
+      }
+
+      await this.prizeInventory.consumeOnDelivery(claim.prizeId, transaction);
+    });
+
+    return deliveredAt;
   }
 
   // ==================== PREMIOS PENDIENTES DEL BAR (MOZO) ====================
@@ -505,16 +556,8 @@ export class PrizeClaimsService {
       );
     }
 
-    await claim.update({
-      status: ClaimStatus.DELIVERED,
-      deliveredById: staff.id,
-      deliveredAt: new Date(),
-      notes: notes || null,
-    });
-
-    if (claim.prize.stock !== null && claim.prize.stock > 0) {
-      await claim.prize.decrement('stock', { by: 1 });
-    }
+    // Entregado + descuento de la unidad física, atómico e idempotente.
+    const deliveredAt = await this.markDelivered(claim, staff.id, notes);
 
     this.logger.log(
       `🏆 Premio MAYOR entregado - Código: ${code}, Premio: ${claim.prize.name}, ` +
@@ -526,7 +569,7 @@ export class PrizeClaimsService {
       claimCode: claim.claimCode,
       prize: { name: claim.prize.name, value: claim.prize.value },
       user: { name: claim.user.name, phone: claim.user.phone },
-      deliveredAt: claim.deliveredAt!,
+      deliveredAt,
     };
   }
 

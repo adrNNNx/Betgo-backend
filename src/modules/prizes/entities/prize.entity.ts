@@ -138,13 +138,7 @@ export class Prize extends Model<Prize, PrizeCreationAttributes> {
     return this.barId === null;
   }
 
-  hasStock(): boolean {
-    return this.stock === null || this.stock > 0;
-  }
-
-  decrementStock(): void {
-    if (this.stock !== null && this.stock > 0) {
-      this.stock -= 1;
-    }
-  }
+  // Sin helpers de stock acá a propósito: lo que se puede otorgar no es
+  // `stock`, es stock menos los comprobantes pendientes, y hay que contarlo
+  // con la fila bloqueada. Vive en PrizeInventoryService.
 }

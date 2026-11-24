@@ -193,55 +193,71 @@ export class GameAccessService {
     const symbols = await this.playsService.getBarSymbols(bar.id);
     const result = this.playsService.generatePlayResult(symbols);
 
-    // Gana si el símbolo que salió paga con esa cantidad de repeticiones.
-    const prize = await this.playsService.getPrizeForResult(result);
-    const isWinner = !!prize;
+    // Premio, jugada y comprobante en una sola transacción: la fila del premio
+    // queda bloqueada hasta que el comprobante se confirma, así dos jugadores
+    // no se llevan la misma última unidad.
+    const txResult = await this.sequelize.transaction(async (transaction) => {
+      // Gana si el símbolo paga con esa cantidad y al premio le queda stock.
+      const prize = await this.playsService.getPrizeForResult(
+        result,
+        transaction,
+      );
+      const isWinner = !!prize;
 
-    const play = await this.playsService.createPlay({
-      userId: user.id,
-      barId: bar.id,
-      tableId,
-      type: PlayType.FREE,
-      result: {
-        symbols: result.symbolIds,
-        matchCount: result.matchCount,
-        isWinner,
-        minMatch: result.topSymbol?.minMatchToWin ?? REELS,
-      },
-      isWinner,
-      prizeId: prize?.id,
+      const play = await this.playsService.createPlay(
+        {
+          userId: user.id,
+          barId: bar.id,
+          tableId,
+          type: PlayType.FREE,
+          result: {
+            symbols: result.symbolIds,
+            matchCount: result.matchCount,
+            isWinner,
+            minMatch: result.topSymbol?.minMatchToWin ?? REELS,
+          },
+          isWinner,
+          prizeId: prize?.id,
+        },
+        transaction,
+      );
+
+      const claim = prize
+        ? await this.playsService.createPrizeClaim(
+            play.id,
+            user.id,
+            bar.id,
+            prize.id,
+            transaction,
+          )
+        : undefined;
+
+      return { play, prize, claim, isWinner };
     });
 
-    let claimCode: string | undefined;
-    let claimQrCode: string | undefined;
-    if (prize) {
-      const claim = await this.playsService.createPrizeClaim(
-        play.id,
-        user.id,
-        bar.id,
-        prize.id,
-      );
-      claimCode = claim.claimCode;
-      claimQrCode = await this.playsService.generateClaimQrCode(claimCode);
-    }
+    // El QR es CPU pura: se arma después del commit para no alargar el lock.
+    const claimCode = txResult.claim?.claimCode;
+    const claimQrCode = claimCode
+      ? await this.playsService.generateClaimQrCode(claimCode)
+      : undefined;
 
     this.logger.log(
       `Jugada GRATIS - Bar: ${bar.slug}, User: ${user.phone}, ` +
-        `Ganó: ${isWinner}, Restantes: ${dailyPlay.getRemainingPlays()}`,
+        `Ganó: ${txResult.isWinner}, Restantes: ${dailyPlay.getRemainingPlays()}`,
     );
 
     return {
-      playId: play.id,
+      playId: txResult.play.id,
       symbols: result.symbolIds,
       symbolDetails: result.symbolDetails,
-      isWinner,
-      prize: prize
+      isWinner: txResult.isWinner,
+      prize: txResult.prize
         ? {
-            id: prize.id,
-            name: prize.name,
-            type: prize.type,
-            value: prize.value ?? undefined,
-            imageUrl: prize.imageUrl ?? undefined,
+            id: txResult.prize.id,
+            name: txResult.prize.name,
+            type: txResult.prize.type,
+            value: txResult.prize.value ?? undefined,
+            imageUrl: txResult.prize.imageUrl ?? undefined,
             claimCode,
             claimQrCode,
           }
@@ -294,18 +310,23 @@ export class GameAccessService {
     const symbols = await this.playsService.getBarSymbols(bar.id);
     const result = this.playsService.generatePlayResult(symbols);
 
-    // Gana si el símbolo que salió paga con esa cantidad de repeticiones.
-    const prize = await this.playsService.getPrizeForResult(result);
-    const isWinner = !!prize;
-
     // === Transacción atómica ===
     const txResult = await this.sequelize.transaction(async (transaction) => {
-      // Lock para evitar race conditions
+      // Lock para evitar race conditions. Orden fijo en todas las jugadas:
+      // usuario → pozo → premio, así dos transacciones nunca se esperan en cruz.
       await user.reload({ transaction, lock: true });
       await pool.reload({ transaction, lock: true });
 
       // Re-validar saldo (pudo cambiar entre lectura y lock)
       this.validateBalance(user.balance, playCost);
+
+      // Gana si el símbolo paga con esa cantidad y al premio le queda stock.
+      // Adentro de la transacción: el premio queda bloqueado hasta el comprobante.
+      const prize = await this.playsService.getPrizeForResult(
+        result,
+        transaction,
+      );
+      const isWinner = !!prize;
 
       const balanceBefore = user.balance;
       const poolBefore = Number(pool.currentAmount);
@@ -380,23 +401,30 @@ export class GameAccessService {
         { transaction },
       );
 
-      // 7) Si ganó, crear claim
-      let claimCode: string | undefined;
-      let claimQrCode: string | undefined;
-      if (prize) {
-        const claim = await this.playsService.createPrizeClaim(
-          play.id,
-          user.id,
-          bar.id,
-          prize.id,
-          transaction,
-        );
-        claimCode = claim.claimCode;
-        claimQrCode = await this.playsService.generateClaimQrCode(claimCode);
-      }
+      // 7) Si ganó, crear claim (único por jugada en la base)
+      const claim = prize
+        ? await this.playsService.createPrizeClaim(
+            play.id,
+            user.id,
+            bar.id,
+            prize.id,
+            transaction,
+          )
+        : undefined;
 
-      return { play, claimCode, claimQrCode, poolAfter: Number(pool.currentAmount) };
+      return {
+        play,
+        prize,
+        isWinner,
+        claimCode: claim?.claimCode,
+        poolAfter: Number(pool.currentAmount),
+      };
     });
+
+    // El QR es CPU pura: se arma después del commit para no alargar los locks.
+    const claimQrCode = txResult.claimCode
+      ? await this.playsService.generateClaimQrCode(txResult.claimCode)
+      : undefined;
 
     // === Respuesta (ya committed) ===
     await user.reload();
@@ -409,23 +437,23 @@ export class GameAccessService {
 
     this.logger.log(
       `Jugada PAGA - Bar: ${bar.slug}, User: ${user.phone}, ` +
-        `Costo: ${playCost}, Ganó: ${isWinner}`,
+        `Costo: ${playCost}, Ganó: ${txResult.isWinner}`,
     );
 
     return {
       playId: txResult.play.id,
       symbols: result.symbolIds,
       symbolDetails: result.symbolDetails,
-      isWinner,
-      prize: prize
+      isWinner: txResult.isWinner,
+      prize: txResult.prize
         ? {
-            id: prize.id,
-            name: prize.name,
-            type: prize.type,
-            value: prize.value ?? undefined,
-            imageUrl: prize.imageUrl ?? undefined,
+            id: txResult.prize.id,
+            name: txResult.prize.name,
+            type: txResult.prize.type,
+            value: txResult.prize.value ?? undefined,
+            imageUrl: txResult.prize.imageUrl ?? undefined,
             claimCode: txResult.claimCode,
-            claimQrCode: txResult.claimQrCode,
+            claimQrCode,
           }
         : null,
       // El motor ya los calcula: evita que el front los derive contando symbols[].
@@ -480,20 +508,21 @@ export class GameAccessService {
     // El jackpot exige los 5 carriles de un símbolo marcado como jackpot.
     const isJackpotWinner = this.isJackpotWin(result);
 
-    // Premio menor: el símbolo que salió paga desde su propio umbral. No vacía
-    // el pozo (es un premio físico) y la jugada igual contribuye.
-    const minorPrize = isJackpotWinner
-      ? null
-      : await this.playsService.getPrizeForResult(result);
-
     // === Transacción atómica ===
     const txResult = await this.sequelize.transaction(async (transaction) => {
-      // Lock filas críticas
+      // Lock filas críticas. Orden fijo: usuario → pozo → premio.
       await user.reload({ transaction, lock: true });
       await pool.reload({ transaction, lock: true });
 
       // Re-validar saldo
       this.validateBalance(user.balance, playCost);
+
+      // Premio menor: el símbolo que salió paga desde su propio umbral, si al
+      // premio le queda stock. No vacía el pozo (es un premio físico) y la
+      // jugada igual contribuye. Adentro, para bloquear el premio.
+      const minorPrize = isJackpotWinner
+        ? null
+        : await this.playsService.getPrizeForResult(result, transaction);
 
       const balanceBefore = user.balance;
       const poolBefore = Number(pool.currentAmount);
@@ -646,6 +675,7 @@ export class GameAccessService {
 
       return {
         play,
+        minorPrize,
         jackpotAmount,
         jackpotClaim,
         minorClaim,
@@ -667,7 +697,9 @@ export class GameAccessService {
     this.logger.log(
       `Jugada POOL - Bar: ${bar.slug}, User: ${user.phone}, ` +
         `Costo: ${playCost}, Ganó: ${isJackpotWinner}` +
-        (minorPrize ? `, Premio ${result.matchCount} iguales: ${minorPrize.name}` : ''),
+        (txResult.minorPrize
+          ? `, Premio ${result.matchCount} iguales: ${txResult.minorPrize.name}`
+          : ''),
     );
 
     let prizeResponse: PlayResultResponse['prize'] = null;
@@ -678,13 +710,13 @@ export class GameAccessService {
         type: 'jackpot',
         value: txResult.jackpotAmount,
       };
-    } else if (minorPrize && txResult.minorClaim) {
+    } else if (txResult.minorPrize && txResult.minorClaim) {
       prizeResponse = {
-        id: minorPrize.id,
-        name: minorPrize.name,
-        type: minorPrize.type,
-        value: minorPrize.value ?? undefined,
-        imageUrl: minorPrize.imageUrl ?? undefined,
+        id: txResult.minorPrize.id,
+        name: txResult.minorPrize.name,
+        type: txResult.minorPrize.type,
+        value: txResult.minorPrize.value ?? undefined,
+        imageUrl: txResult.minorPrize.imageUrl ?? undefined,
         claimCode: txResult.minorClaim.claimCode,
         claimQrCode: await this.playsService.generateClaimQrCode(
           txResult.minorClaim.claimCode,
@@ -696,7 +728,7 @@ export class GameAccessService {
       playId: txResult.play.id,
       symbols: result.symbolIds,
       symbolDetails: result.symbolDetails,
-      isWinner: isJackpotWinner || !!minorPrize,
+      isWinner: isJackpotWinner || !!txResult.minorPrize,
       prize: prizeResponse,
       // El motor ya los calcula; el front los derivaba contando symbols[].
       matchCount: result.matchCount,
