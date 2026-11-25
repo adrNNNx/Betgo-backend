@@ -24,6 +24,7 @@ export enum AuditAction {
   PRIZE_DELIVERED = 'PRIZE_DELIVERED',
   POOL_ADJUSTMENT = 'POOL_ADJUSTMENT',
   BAR_RECHARGE = 'BAR_RECHARGE',
+  FREE_PLAYS_RESET = 'FREE_PLAYS_RESET',
 }
 
 export enum AuditEntity {
@@ -39,6 +40,7 @@ export enum AuditEntity {
   RECHARGE_CODE = 'recharge_codes',
   PRIZE_CLAIM = 'prize_claims',
   POOL_MOVEMENT = 'pool_movements',
+  USER_DAILY_PLAY = 'user_daily_plays',
 }
 
 interface AuditLogCreationAttributes {
